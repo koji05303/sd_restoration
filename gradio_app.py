@@ -225,6 +225,7 @@ body, .gradio-container {
 }
 
 .section-card .gr-form,
+.section-card .form,
 .section-card .gr-group,
 .section-card .gr-box,
 .section-card .gr-block,
@@ -337,6 +338,28 @@ body, .gradio-container {
     background: rgba(255, 255, 255, 0.05) !important;
     border: 1px solid rgba(235, 214, 185, 0.08) !important;
     color: var(--ink) !important;
+}
+
+.gradio-container .options,
+.gradio-container [role="listbox"].options,
+.gradio-container ul.options {
+    background: var(--panel-strong) !important;
+    border: 1px solid rgba(235, 214, 185, 0.1) !important;
+    border-radius: 18px !important;
+    box-shadow: var(--shadow-soft) !important;
+}
+
+.gradio-container .options .item,
+.gradio-container [role="option"] {
+    color: var(--ink) !important;
+}
+
+.gradio-container .options .item:hover,
+.gradio-container .options .item.selected,
+.gradio-container [role="option"]:hover,
+.gradio-container [role="option"][aria-selected="true"] {
+    background: var(--accent-soft) !important;
+    color: #ffe7c7 !important;
 }
 
 .lux-log textarea {
