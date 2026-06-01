@@ -25,36 +25,33 @@ from enhancer import (
 
 
 APP_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Manrope:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500&display=swap');
-
 :root {
-    --canvas: #f5efe6;
-    --canvas-deep: #eadfce;
-    --ink: #221c16;
-    --muted: #6a6054;
-    --panel: rgba(255, 250, 243, 0.82);
-    --panel-strong: rgba(255, 248, 238, 0.94);
-    --line: rgba(76, 58, 37, 0.12);
-    --line-strong: rgba(104, 74, 37, 0.22);
-    --accent: #b06a28;
-    --accent-deep: #8a511d;
-    --accent-soft: #edd7bd;
-    --shadow: 0 24px 80px rgba(49, 34, 18, 0.12);
-    --shadow-soft: 0 14px 34px rgba(49, 34, 18, 0.08);
+    --canvas: #11141a;
+    --canvas-deep: #11141a;
+    --ink: #f6ead9;
+    --muted: #b2a38f;
+    --panel: rgba(17, 20, 26, 0.96);
+    --panel-strong: rgba(17, 20, 26, 0.96);
+    --line: rgba(235, 214, 185, 0.09);
+    --line-strong: rgba(235, 214, 185, 0.2);
+    --accent: #d79a51;
+    --accent-deep: #f2bb72;
+    --accent-soft: rgba(215, 154, 81, 0.14);
+    --shadow: 0 18px 48px rgba(0, 0, 0, 0.22);
+    --shadow-soft: 0 10px 28px rgba(0, 0, 0, 0.16);
 }
 
 body, .gradio-container {
     font-family: 'Manrope', ui-sans-serif, sans-serif;
     color: var(--ink);
-    background:
-        radial-gradient(circle at top left, rgba(239, 217, 190, 0.75), transparent 30%),
-        radial-gradient(circle at top right, rgba(236, 205, 162, 0.45), transparent 26%),
-        linear-gradient(180deg, #fbf7f1 0%, var(--canvas) 52%, #efe5d7 100%);
+    color-scheme: dark;
+    background: var(--canvas) !important;
 }
 
 .gradio-container {
     max-width: 1480px !important;
     padding: 24px 20px 60px !important;
+    background: var(--canvas) !important;
 }
 
 .app-shell {
@@ -62,34 +59,14 @@ body, .gradio-container {
     overflow: hidden;
     border: 1px solid var(--line);
     border-radius: 34px;
-    background: linear-gradient(180deg, rgba(255, 253, 249, 0.82), rgba(248, 241, 232, 0.88));
+    background: var(--panel-strong);
     box-shadow: var(--shadow);
     padding: 22px;
 }
 
 .app-shell::before,
 .app-shell::after {
-    content: "";
-    position: absolute;
-    border-radius: 999px;
-    pointer-events: none;
-    filter: blur(24px);
-}
-
-.app-shell::before {
-    width: 320px;
-    height: 320px;
-    top: -120px;
-    right: -80px;
-    background: rgba(217, 162, 97, 0.18);
-}
-
-.app-shell::after {
-    width: 240px;
-    height: 240px;
-    bottom: -100px;
-    left: -90px;
-    background: rgba(185, 127, 70, 0.12);
+    display: none;
 }
 
 .hero-panel {
@@ -106,19 +83,17 @@ body, .gradio-container {
 .section-card {
     border: 1px solid var(--line);
     border-radius: 28px;
-    background: var(--panel);
+    background: var(--panel-strong);
     box-shadow: var(--shadow-soft);
-    backdrop-filter: blur(18px);
+    backdrop-filter: none;
 }
 
 .hero-card {
     padding: 28px 30px;
-    background: linear-gradient(145deg, rgba(255, 249, 241, 0.96), rgba(246, 234, 217, 0.82));
 }
 
 .hero-note {
     padding: 24px;
-    background: linear-gradient(160deg, rgba(255, 248, 238, 0.92), rgba(239, 226, 208, 0.75));
 }
 
 .eyebrow {
@@ -127,7 +102,7 @@ body, .gradio-container {
     gap: 8px;
     padding: 8px 12px;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.55);
+    background: rgba(255, 255, 255, 0.04);
     color: var(--accent-deep);
     font-size: 0.82rem;
     font-weight: 800;
@@ -140,8 +115,8 @@ body, .gradio-container {
     width: 8px;
     height: 8px;
     border-radius: 999px;
-    background: linear-gradient(180deg, #d9a05d, #9f6125);
-    box-shadow: 0 0 0 6px rgba(176, 106, 40, 0.12);
+    background: linear-gradient(180deg, #f0b66c, #b56d24);
+    box-shadow: 0 0 0 6px rgba(215, 154, 81, 0.14);
 }
 
 .hero-title {
@@ -150,7 +125,7 @@ body, .gradio-container {
     font-size: clamp(2.5rem, 5vw, 4.8rem);
     line-height: 0.95;
     letter-spacing: -0.04em;
-    color: #24160d;
+    color: #fff0dc;
 }
 
 .hero-copy {
@@ -171,8 +146,8 @@ body, .gradio-container {
 .metric-card {
     padding: 14px 16px;
     border-radius: 22px;
-    background: rgba(255, 255, 255, 0.58);
-    border: 1px solid rgba(90, 67, 42, 0.1);
+    background: var(--panel-strong);
+    border: 1px solid rgba(235, 214, 185, 0.08);
 }
 
 .metric-label {
@@ -188,14 +163,14 @@ body, .gradio-container {
     font-family: 'Fraunces', Georgia, serif;
     font-size: 1.38rem;
     line-height: 1.05;
-    color: #2a1a10;
+    color: #ffe7c7;
 }
 
 .note-title {
     margin: 0 0 10px;
     font-family: 'Fraunces', Georgia, serif;
     font-size: 1.55rem;
-    color: #26160c;
+    color: #ffe7c7;
 }
 
 .note-copy,
@@ -220,6 +195,15 @@ body, .gradio-container {
     gap: 18px;
 }
 
+.controls-grid {
+    gap: 18px;
+}
+
+.workspace-grid > .gr-column,
+.controls-grid > .gr-column {
+    min-width: 0;
+}
+
 .section-card {
     padding: 18px;
     background: var(--panel-strong);
@@ -228,10 +212,18 @@ body, .gradio-container {
 .section-card .gr-form,
 .section-card .gr-group,
 .section-card .gr-box,
-.section-card .gr-block {
+.section-card .gr-block,
+.section-card .styler {
     background: transparent !important;
     border: 0 !important;
     box-shadow: none !important;
+}
+
+.section-card .prose,
+.section-card .prose *,
+.section-card .gr-markdown,
+.section-card .gr-markdown * {
+    background: transparent !important;
 }
 
 .section-heading {
@@ -239,7 +231,7 @@ body, .gradio-container {
     font-family: 'Fraunces', Georgia, serif !important;
     font-size: 1.42rem !important;
     letter-spacing: -0.03em;
-    color: #26170d !important;
+    color: #ffe7c7 !important;
 }
 
 .section-kicker {
@@ -259,8 +251,25 @@ body, .gradio-container {
 
 .lux-image,
 .lux-output {
-    border: 1px solid rgba(88, 64, 38, 0.12);
-    background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(245, 238, 228, 0.9));
+    border: 1px solid rgba(235, 214, 185, 0.08);
+    background: var(--panel-strong);
+}
+
+.lux-image .image-container,
+.lux-output .image-container,
+.lux-image .empty,
+.lux-output .empty {
+    aspect-ratio: 4 / 3;
+    min-height: 0 !important;
+}
+
+.lux-image img,
+.lux-image canvas,
+.lux-output img,
+.lux-output canvas {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
 }
 
 .lux-text textarea,
@@ -269,20 +278,54 @@ body, .gradio-container {
 .gradio-container textarea,
 .gradio-container select {
     border-radius: 18px !important;
-    border: 1px solid rgba(95, 72, 46, 0.12) !important;
-    background: rgba(255, 252, 247, 0.92) !important;
+    border: 1px solid rgba(235, 214, 185, 0.1) !important;
+    background: rgba(255, 255, 255, 0.04) !important;
     color: var(--ink) !important;
+}
+
+.gradio-container input::placeholder,
+.gradio-container textarea::placeholder {
+    color: rgba(178, 163, 143, 0.82) !important;
 }
 
 .gradio-container label,
 .gradio-container .block_label {
     font-weight: 700 !important;
-    color: #433528 !important;
+    color: #e6d5c0 !important;
+}
+
+.gradio-container label.float,
+.gradio-container .float {
+    background: var(--panel-strong) !important;
+    color: #e6d5c0 !important;
+    border: 1px solid rgba(235, 214, 185, 0.08) !important;
+    box-shadow: none !important;
 }
 
 .gradio-container .wrap.svelte-1ipelgc,
 .gradio-container .wrap.svelte-13io5gv {
     border-radius: 18px !important;
+}
+
+.gradio-container .wrap,
+.gradio-container .gradio-dropdown,
+.gradio-container .gradio-dropdown > div,
+.gradio-container .gradio-slider,
+.gradio-container .gradio-number,
+.gradio-container .gradio-textbox {
+    background: transparent !important;
+}
+
+.gradio-container .icon-btn,
+.gradio-container button.secondary,
+.gradio-container .lg.secondary {
+    background: rgba(255, 255, 255, 0.05) !important;
+    border: 1px solid rgba(235, 214, 185, 0.08) !important;
+    color: var(--ink) !important;
+}
+
+.lux-log textarea {
+    min-height: 360px !important;
 }
 
 .tip-grid {
@@ -294,15 +337,15 @@ body, .gradio-container {
 .tip-card {
     padding: 16px;
     border-radius: 20px;
-    background: linear-gradient(180deg, rgba(255, 251, 246, 0.95), rgba(243, 233, 220, 0.82));
-    border: 1px solid rgba(88, 64, 38, 0.1);
+    background: var(--panel-strong);
+    border: 1px solid rgba(235, 214, 185, 0.08);
 }
 
 .tip-card h4 {
     margin: 0 0 8px;
     font-family: 'Fraunces', Georgia, serif;
     font-size: 1.1rem;
-    color: #2a1a10;
+    color: #ffe4bf;
 }
 
 .tip-card p {
@@ -316,12 +359,12 @@ body, .gradio-container {
     min-height: 64px;
     border: 0 !important;
     border-radius: 20px !important;
-    background: linear-gradient(135deg, #a85f1d, #cf8d45) !important;
-    color: #fff8f0 !important;
+    background: linear-gradient(135deg, #a55b16, #e0a35b) !important;
+    color: #130e09 !important;
     font-size: 1rem !important;
     font-weight: 800 !important;
     letter-spacing: 0.02em;
-    box-shadow: 0 18px 36px rgba(168, 95, 29, 0.22);
+    box-shadow: 0 18px 42px rgba(224, 163, 91, 0.2);
 }
 
 #enhance-button:hover {
@@ -339,9 +382,9 @@ body, .gradio-container {
 .status-banner {
     padding: 14px 16px;
     border-radius: 18px;
-    background: linear-gradient(135deg, rgba(252, 245, 232, 0.96), rgba(242, 229, 212, 0.94));
-    border: 1px solid rgba(106, 77, 42, 0.12);
-    color: #453629;
+    background: var(--panel-strong);
+    border: 1px solid rgba(235, 214, 185, 0.08);
+    color: #d8c7b2;
     font-size: 0.92rem;
     line-height: 1.65;
 }
@@ -354,57 +397,274 @@ body, .gradio-container {
     letter-spacing: 0.02em;
 }
 
-@media (max-width: 1080px) {
-    .hero-panel {
-        grid-template-columns: 1fr;
-    }
-
-    .metric-grid,
-    .tip-grid {
-        grid-template-columns: 1fr;
-    }
+.gradio-container footer {
+    display: none !important;
 }
 
-@media (max-width: 720px) {
+.gradio-container .gradio-image .upload-container,
+.gradio-container .gr-image .upload-container,
+.gradio-container .image-container,
+.gradio-container .empty,
+.gradio-container .gr-panel {
+    background: var(--panel-strong) !important;
+}
+
+.gradio-container .prose,
+.gradio-container .prose * {
+    color: inherit;
+}
+
+@media (min-width: 1600px) {
     .gradio-container {
-        padding: 12px 12px 36px !important;
+        max-width: 1760px !important;
+        padding: 30px 30px 72px !important;
     }
 
     .app-shell {
-        border-radius: 24px;
-        padding: 14px;
+        padding: 28px;
+        border-radius: 38px;
+    }
+
+    .hero-panel {
+        grid-template-columns: minmax(0, 1.72fr) minmax(360px, 0.92fr);
+        gap: 24px;
+        padding: 14px 10px 28px;
+    }
+
+    .workspace-grid,
+    .controls-grid,
+    .pane-stack {
+        gap: 24px;
+    }
+
+    .hero-card {
+        padding: 34px 36px;
+    }
+
+    .hero-note,
+    .section-card {
+        padding: 24px;
+    }
+
+    .hero-title {
+        font-size: clamp(3.2rem, 4vw, 5.4rem);
+    }
+
+    .hero-copy {
+        max-width: 60ch;
+        font-size: 1.08rem;
+    }
+
+    .metric-grid {
+        gap: 14px;
+    }
+
+    .metric-card,
+    .tip-card {
+        padding: 18px;
+    }
+
+    .workspace-grid > .gr-column:first-child {
+        flex: 1.15 1 0% !important;
+    }
+
+    .workspace-grid > .gr-column:last-child {
+        flex: 0.9 1 0% !important;
+    }
+}
+
+@media (max-width: 1200px) {
+    .gradio-container {
+        padding: 18px 16px 40px !important;
+    }
+
+    .app-shell {
+        padding: 18px;
+    }
+
+    .hero-panel {
+        grid-template-columns: 1fr;
+        gap: 16px;
+        padding: 4px 2px 18px;
+    }
+
+    .workspace-grid,
+    .controls-grid {
+        flex-direction: column !important;
+    }
+
+    .workspace-grid > .gr-column,
+    .controls-grid > .gr-column {
+        width: 100% !important;
+        max-width: 100% !important;
+        flex: 1 1 100% !important;
+    }
+
+    .hero-title {
+        font-size: clamp(2.35rem, 6vw, 4.1rem);
+    }
+
+    .hero-copy,
+    .note-copy,
+    .note-list,
+    .section-kicker {
+        max-width: 100%;
+    }
+}
+
+@media (max-width: 900px) {
+    .metric-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .tip-grid {
+        grid-template-columns: 1fr;
     }
 
     .hero-card,
     .hero-note,
     .section-card {
-        border-radius: 22px;
+        border-radius: 24px;
+    }
+
+    .hero-card {
+        padding: 22px;
+    }
+
+    .hero-note,
+    .section-card {
+        padding: 18px;
     }
 
     .hero-title {
-        font-size: 2.35rem;
+        font-size: clamp(2.1rem, 8vw, 3.2rem);
+        line-height: 0.98;
+    }
+
+    .metric-value {
+        font-size: 1.2rem;
+    }
+
+    .lux-image,
+    .lux-output,
+    .lux-image .image-container,
+    .lux-output .image-container {
+        border-radius: 20px !important;
+    }
+
+    .lux-log textarea {
+        min-height: 260px !important;
     }
 }
+
+@media (max-width: 640px) {
+    .gradio-container {
+        padding: 10px 10px 28px !important;
+    }
+
+    .app-shell {
+        border-radius: 20px;
+        padding: 12px;
+    }
+
+    .hero-card,
+    .hero-note,
+    .section-card {
+        border-radius: 18px;
+        padding: 14px;
+    }
+
+    .hero-title {
+        font-size: 1.95rem;
+    }
+
+    .hero-copy,
+    .section-kicker,
+    .note-copy,
+    .note-list,
+    .micro-copy,
+    .status-banner {
+        font-size: 0.9rem;
+        line-height: 1.6;
+    }
+
+    .eyebrow {
+        padding: 7px 10px;
+        font-size: 0.76rem;
+    }
+
+    .metric-card,
+    .tip-card {
+        padding: 14px;
+        border-radius: 16px;
+    }
+
+    .lux-text textarea,
+    .lux-log textarea,
+    .gradio-container input,
+    .gradio-container textarea,
+    .gradio-container select {
+        border-radius: 14px !important;
+    }
+
+    #enhance-button {
+        min-height: 58px;
+        border-radius: 16px !important;
+        font-size: 0.95rem !important;
+    }
+
+    .gradio-container .image-container,
+    .gradio-container .empty {
+        min-height: 220px;
+    }
+
+    .lux-image .image-container,
+    .lux-output .image-container,
+    .lux-image .empty,
+    .lux-output .empty {
+        aspect-ratio: 1 / 1;
+    }
+
+    .lux-log textarea {
+        min-height: 150px !important;
+        max-height: 150px !important;
+    }
+}
+"""
+
+
+APP_HEAD = """
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=IBM+Plex+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 """
 
 
 def build_theme() -> gr.Theme:
     return gr.themes.Base(
         primary_hue="amber",
-        secondary_hue="orange",
-        neutral_hue="stone",
+        secondary_hue="zinc",
+        neutral_hue="slate",
     ).set(
-        body_background_fill="#f5efe6",
-        body_text_color="#221c16",
-        block_background_fill="rgba(255, 250, 243, 0.82)",
-        block_border_color="rgba(76, 58, 37, 0.12)",
-        input_background_fill="#fffaf4",
-        input_border_color="rgba(95, 72, 46, 0.12)",
-        button_primary_background_fill="#b06a28",
-        button_primary_background_fill_hover="#8a511d",
-        button_primary_text_color="#fff8f0",
-        checkbox_background_color="#fffaf4",
-        slider_color="#b06a28",
+        body_background_fill="#11141a",
+        body_text_color="#f6ead9",
+        block_background_fill="rgba(17, 20, 26, 0.96)",
+        block_border_color="rgba(235, 214, 185, 0.08)",
+        panel_background_fill="rgba(17, 20, 26, 0.96)",
+        panel_border_color="rgba(235, 214, 185, 0.08)",
+        input_background_fill="rgba(255, 255, 255, 0.04)",
+        input_border_color="rgba(235, 214, 185, 0.1)",
+        input_placeholder_color="#9f917d",
+        body_text_color_subdued="#b2a38f",
+        button_primary_background_fill="#d79a51",
+        button_primary_background_fill_hover="#f2bb72",
+        button_primary_text_color="#130e09",
+        button_secondary_background_fill="rgba(255, 255, 255, 0.05)",
+        button_secondary_border_color="rgba(235, 214, 185, 0.08)",
+        checkbox_background_color="rgba(255, 255, 255, 0.04)",
+        checkbox_border_color="rgba(235, 214, 185, 0.12)",
+        slider_color="#d79a51",
+        color_accent="#d79a51",
     )
 
 
@@ -583,7 +843,7 @@ def build_ui() -> gr.Blocks:
                             elem_classes="lux-text",
                         )
 
-                    with gr.Row():
+                    with gr.Row(elem_classes="controls-grid"):
                         with gr.Column():
                             with gr.Group(elem_classes="section-card"):
                                 gr.Markdown("### Render Controls", elem_classes="section-heading")
@@ -764,6 +1024,7 @@ def main() -> None:
         inbrowser=args.inbrowser,
         theme=theme,
         css=APP_CSS,
+        head=APP_HEAD,
     )
 
 
