@@ -49,13 +49,27 @@ body, .gradio-container {
 }
 
 .gradio-container {
-    max-width: 1480px !important;
-    padding: 24px 20px 60px !important;
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 auto !important;
+    box-sizing: border-box !important;
+    padding: 24px 24px 60px !important;
     background: var(--canvas) !important;
+}
+
+.gradio-container > .app,
+.gradio-container > .app > .wrap,
+.gradio-container > .app > .wrap > .contain,
+.gradio-container > .app > .wrap > .contain > .column {
+    width: 100% !important;
+    max-width: none !important;
+    margin: 0 !important;
 }
 
 .app-shell {
     position: relative;
+    width: 100%;
+    margin: 0 auto;
     overflow: hidden;
     border: 1px solid var(--line);
     border-radius: 34px;
@@ -189,6 +203,7 @@ body, .gradio-container {
     position: relative;
     z-index: 1;
     gap: 18px;
+    align-items: flex-start;
 }
 
 .pane-stack {
@@ -199,8 +214,8 @@ body, .gradio-container {
     gap: 18px;
 }
 
-.workspace-grid > .gr-column,
-.controls-grid > .gr-column {
+.workspace-grid > .column,
+.controls-grid > .column {
     min-width: 0;
 }
 
@@ -328,6 +343,43 @@ body, .gradio-container {
     min-height: 360px !important;
 }
 
+.compare-kicker {
+    margin: 16px 2px 12px;
+    color: #e6d5c0;
+    font-size: 0.8rem;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+.compare-grid {
+    gap: 12px;
+}
+
+.compare-image,
+.compare-image .image-container {
+    border-radius: 20px !important;
+    overflow: hidden !important;
+}
+
+.compare-image {
+    border: 1px solid rgba(235, 214, 185, 0.08);
+    background: var(--panel-strong);
+}
+
+.compare-image .image-container,
+.compare-image .empty {
+    aspect-ratio: 4 / 3;
+    min-height: 0 !important;
+}
+
+.compare-image img,
+.compare-image canvas {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
 .tip-grid {
     display: grid;
     grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -414,9 +466,16 @@ body, .gradio-container {
     color: inherit;
 }
 
+@media (min-width: 1201px) {
+    .workspace-grid > .column:last-child > .gr-group.section-card:first-child {
+        position: sticky;
+        top: 24px;
+        z-index: 3;
+    }
+}
+
 @media (min-width: 1600px) {
     .gradio-container {
-        max-width: 1760px !important;
         padding: 30px 30px 72px !important;
     }
 
@@ -464,12 +523,16 @@ body, .gradio-container {
         padding: 18px;
     }
 
-    .workspace-grid > .gr-column:first-child {
+    .workspace-grid > .column:first-child {
         flex: 1.15 1 0% !important;
     }
 
-    .workspace-grid > .gr-column:last-child {
+    .workspace-grid > .column:last-child {
         flex: 0.9 1 0% !important;
+    }
+
+    .workspace-grid > .column:last-child > .gr-group.section-card:first-child {
+        top: 30px;
     }
 }
 
@@ -493,8 +556,8 @@ body, .gradio-container {
         flex-direction: column !important;
     }
 
-    .workspace-grid > .gr-column,
-    .controls-grid > .gr-column {
+    .workspace-grid > .column,
+    .controls-grid > .column {
         width: 100% !important;
         max-width: 100% !important;
         flex: 1 1 100% !important;
@@ -519,6 +582,10 @@ body, .gradio-container {
 
     .tip-grid {
         grid-template-columns: 1fr;
+    }
+
+    .compare-grid {
+        flex-direction: column !important;
     }
 
     .hero-card,
@@ -621,7 +688,9 @@ body, .gradio-container {
     .lux-image .image-container,
     .lux-output .image-container,
     .lux-image .empty,
-    .lux-output .empty {
+    .lux-output .empty,
+    .compare-image .image-container,
+    .compare-image .empty {
         aspect-ratio: 1 / 1;
     }
 
@@ -688,15 +757,16 @@ def run_enhance(
     progress=gr.Progress(track_tqdm=False),
 ):
     if image is None:
-        return None, "Error: Please upload an input image."
+        return None, None, None, "Error: Please upload an input image."
 
     if tile_overlap >= tile_size:
-        return None, "Error: tile_overlap must be smaller than tile_size."
+        return None, None, None, "Error: tile_overlap must be smaller than tile_size."
 
     if tile_size % 8 != 0:
-        return None, "Error: tile_size must be a multiple of 8."
+        return None, None, None, "Error: tile_size must be a multiple of 8."
 
     seed_value = int(seed) if seed is not None else None
+    source_image = image.convert("RGB").copy()
 
     work_dir = Path(tempfile.mkdtemp(prefix="sd_restoration_"))
     input_path = work_dir / "input.png"
@@ -705,7 +775,7 @@ def run_enhance(
 
     try:
         progress(0.05, desc="Preparing input image")
-        image.convert("RGB").save(input_path)
+        source_image.save(input_path)
 
         resolved_device = resolve_device(device)
         resolved_dtype = resolve_dtype(dtype, resolved_device)
@@ -743,7 +813,7 @@ def run_enhance(
 
         progress(1.0, desc="Done")
         output_logs = logs.getvalue().strip() or "Enhancement finished."
-        return output_image, output_logs
+        return output_image, source_image, output_image.copy(), output_logs
     except SafetyCheckerTriggeredError as exc:
         output_logs = logs.getvalue().strip()
         message = (
@@ -752,12 +822,12 @@ def run_enhance(
         )
         if output_logs:
             message = f"{message}\n\nLogs:\n{output_logs}"
-        return None, message
+        return None, source_image, None, message
     except Exception as exc:
         output_logs = logs.getvalue().strip()
         if output_logs:
-            return None, f"Error: {exc}\n\nLogs:\n{output_logs}"
-        return None, f"Error: {exc}"
+            return None, source_image, None, f"Error: {exc}\n\nLogs:\n{output_logs}"
+        return None, source_image, None, f"Error: {exc}"
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
 
@@ -955,6 +1025,20 @@ def build_ui() -> gr.Blocks:
                             elem_classes="section-kicker",
                         )
                         output_image = gr.Image(type="pil", label="Enhanced Image", elem_classes="lux-output")
+                        gr.HTML("<div class='compare-kicker'>Before / After</div>")
+                        with gr.Row(elem_classes="compare-grid"):
+                            compare_before = gr.Image(
+                                type="pil",
+                                label="Before",
+                                interactive=False,
+                                elem_classes="compare-image",
+                            )
+                            compare_after = gr.Image(
+                                type="pil",
+                                label="After",
+                                interactive=False,
+                                elem_classes="compare-image",
+                            )
                         gr.HTML(
                             "<div class='status-banner'>Premium pass output is assembled from overlapping tiles to keep memory predictable while preserving a more seamless finish.</div>"
                         )
@@ -996,7 +1080,7 @@ def build_ui() -> gr.Blocks:
                 dtype,
                 use_xformers,
             ],
-            outputs=[output_image, logs],
+            outputs=[output_image, compare_before, compare_after, logs],
             api_name="enhance",
         )
 
