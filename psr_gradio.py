@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import html
+import inspect
 import threading
+import tempfile
 import time
 from dataclasses import dataclass
 from typing import Optional
@@ -19,28 +22,29 @@ APP_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&family=Manrope:wght@500;600;700;800&display=swap');
 
 :root {
-    --canvas: #101113;
-    --panel: #181a1d;
-    --panel-raised: #1f2226;
-    --panel-soft: #262a2f;
-    --ink: #f7f4ed;
-    --muted: #a8afb7;
-    --quiet: #737b84;
-    --line: rgba(247, 244, 237, 0.11);
-    --line-strong: rgba(247, 244, 237, 0.18);
-    --accent: #54d6bd;
-    --accent-strong: #7ef0d7;
-    --gold: #d7ad5a;
-    --danger: #e26d61;
-    --shadow: 0 24px 80px rgba(0, 0, 0, 0.34);
-    --shadow-soft: 0 12px 32px rgba(0, 0, 0, 0.22);
+    --canvas: #f5efe8;
+    --panel: #fffaf4;
+    --panel-raised: #ffffff;
+    --panel-soft: #f7eee7;
+    --ink: #2f2a27;
+    --muted: #8b7f77;
+    --quiet: #aa9d94;
+    --line: rgba(80, 57, 48, 0.12);
+    --line-strong: rgba(80, 57, 48, 0.2);
+    --accent: #d9798f;
+    --accent-strong: #c85f78;
+    --sage: #5d9b8d;
+    --gold: #c39a4e;
+    --danger: #c85a50;
+    --shadow: 0 24px 70px rgba(94, 64, 49, 0.16);
+    --shadow-soft: 0 12px 34px rgba(94, 64, 49, 0.1);
 }
 
 body,
 .gradio-container {
     background: var(--canvas) !important;
     color: var(--ink) !important;
-    color-scheme: dark;
+    color-scheme: light;
     font-family: Manrope, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -50,7 +54,8 @@ body,
     margin: 0 !important;
     padding: 20px !important;
     background:
-        linear-gradient(180deg, rgba(84, 214, 189, 0.06), rgba(84, 214, 189, 0) 34%),
+        radial-gradient(circle at 10% 0%, rgba(217, 121, 143, 0.16), rgba(217, 121, 143, 0) 28%),
+        linear-gradient(180deg, rgba(255, 250, 244, 0.86), rgba(245, 239, 232, 1) 44%),
         var(--canvas) !important;
 }
 
@@ -63,7 +68,7 @@ body,
     padding: 14px;
     border: 1px solid var(--line);
     border-radius: 8px;
-    background: rgba(24, 26, 29, 0.94);
+    background: rgba(255, 250, 244, 0.86);
     box-shadow: var(--shadow);
 }
 
@@ -76,7 +81,7 @@ body,
     padding: 12px;
     border: 1px solid var(--line);
     border-radius: 8px;
-    background: #15171a;
+    background: rgba(255, 255, 255, 0.78);
     box-shadow: var(--shadow-soft);
 }
 
@@ -95,7 +100,7 @@ body,
     flex: 0 0 auto;
     border: 1px solid rgba(84, 214, 189, 0.3);
     border-radius: 8px;
-    background: #0f211f;
+    background: #fff1f3;
     color: var(--accent-strong);
     font-size: 0.74rem;
     font-weight: 900;
@@ -121,23 +126,28 @@ body,
 .top-actions {
     display: flex;
     align-items: center;
+    justify-content: flex-end;
+    flex-wrap: wrap;
     gap: 10px;
     min-width: 0;
+    flex: 1 1 360px;
 }
 
 .mode-chip {
     padding: 8px 10px;
-    border: 1px solid rgba(215, 173, 90, 0.24);
+    border: 1px solid rgba(93, 155, 141, 0.26);
     border-radius: 8px;
-    background: rgba(215, 173, 90, 0.08);
-    color: #efd69b;
+    background: rgba(93, 155, 141, 0.12);
+    color: #416f66;
     font-size: 0.74rem;
     font-weight: 900;
     letter-spacing: 0;
 }
 
 .gpu-pill {
-    min-width: 320px;
+    width: clamp(240px, 38vw, 420px);
+    min-width: 0;
+    max-width: 100%;
     padding: 10px 12px;
     border: 1px solid var(--line);
     border-radius: 8px;
@@ -149,10 +159,11 @@ body,
 }
 
 .gpu-row {
-    display: flex;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
-    justify-content: space-between;
-    gap: 14px;
+    gap: 10px;
+    min-width: 0;
 }
 
 .gpu-name {
@@ -164,6 +175,7 @@ body,
 
 .gpu-memory {
     color: var(--muted);
+    font-size: 0.74rem;
     white-space: nowrap;
 }
 
@@ -172,13 +184,13 @@ body,
     margin-top: 8px;
     overflow: hidden;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.07);
+    background: rgba(80, 57, 48, 0.08);
 }
 
 .status-meter-fill {
     height: 100%;
     border-radius: inherit;
-    background: var(--accent);
+    background: linear-gradient(90deg, var(--sage), var(--accent));
 }
 
 .workbench {
@@ -193,7 +205,7 @@ body,
 .status-panel {
     border: 1px solid var(--line);
     border-radius: 8px;
-    background: #15171a;
+    background: rgba(255, 255, 255, 0.76);
     box-shadow: var(--shadow-soft);
 }
 
@@ -263,9 +275,9 @@ body,
     border: 0 !important;
     border-radius: 8px !important;
     background: var(--accent) !important;
-    color: #081412 !important;
+    color: #fffaf4 !important;
     font-weight: 900 !important;
-    box-shadow: 0 14px 30px rgba(84, 214, 189, 0.18) !important;
+    box-shadow: 0 14px 30px rgba(217, 121, 143, 0.26) !important;
 }
 
 #run-button:hover {
@@ -282,7 +294,7 @@ body,
 
 .gradio-container .image-container,
 .gradio-container .empty {
-    background: #101113 !important;
+    background: #fffdf9 !important;
     border-radius: 8px !important;
     border-color: var(--line) !important;
 }
@@ -292,6 +304,19 @@ body,
     font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace !important;
     font-size: 0.8rem !important;
     line-height: 1.55 !important;
+}
+
+.gradio-container .gr-file,
+.gradio-container .file-preview,
+.gradio-container .download {
+    border-radius: 8px !important;
+}
+
+.gradio-container .wrap,
+.gradio-container .gradio-dropdown,
+.gradio-container .gradio-radio,
+.gradio-container .gradio-slider {
+    min-width: 0 !important;
 }
 
 .compact-note {
@@ -309,6 +334,7 @@ body,
     .top-actions,
     .gpu-pill {
         width: 100%;
+        justify-content: flex-start;
     }
 
     .gpu-pill {
@@ -318,6 +344,34 @@ body,
 
     .workbench {
         grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 580px) {
+    .gradio-container {
+        padding: 10px !important;
+    }
+
+    .app-shell {
+        padding: 10px;
+    }
+
+    .brand-subtitle {
+        white-space: normal;
+    }
+
+    .top-actions {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .gpu-row {
+        grid-template-columns: 1fr;
+        gap: 4px;
+    }
+
+    .gpu-memory {
+        white-space: normal;
     }
 }
 """
@@ -376,7 +430,7 @@ def gpu_status_html() -> str:
         )
 
     device_index = torch.cuda.current_device()
-    name = torch.cuda.get_device_name(device_index)
+    name = html.escape(torch.cuda.get_device_name(device_index))
     props = torch.cuda.get_device_properties(device_index)
     allocated = torch.cuda.memory_allocated(device_index) / 1024**3
     reserved = torch.cuda.memory_reserved(device_index) / 1024**3
@@ -406,22 +460,62 @@ def bgr_to_image(image_bgr: np.ndarray) -> Image.Image:
     return Image.fromarray(rgb)
 
 
+def make_preview_image(label: str, height: int) -> gr.Image:
+    kwargs = {
+        "label": label,
+        "type": "pil",
+        "height": height,
+    }
+    image_params = inspect.signature(gr.Image).parameters
+    if "format" in image_params:
+        kwargs["format"] = "png"
+    if "show_download_button" in image_params:
+        kwargs["show_download_button"] = False
+    return gr.Image(**kwargs)
+
+
+def save_download_image(image: Image.Image, output_format: str) -> str:
+    normalized_format = output_format.strip().upper()
+    if normalized_format not in {"PNG", "JPG"}:
+        normalized_format = "PNG"
+
+    suffix = ".jpg" if normalized_format == "JPG" else ".png"
+    with tempfile.NamedTemporaryFile(
+        prefix="pure_psr_restore_",
+        suffix=suffix,
+        delete=False,
+    ) as file:
+        output_path = file.name
+
+    if normalized_format == "JPG":
+        image.convert("RGB").save(output_path, format="JPEG", quality=96, subsampling=0)
+    else:
+        image.save(output_path, format="PNG", optimize=True)
+
+    return output_path
+
+
 def run_psr(
     image: Optional[Image.Image],
     enhance_detail: bool,
+    output_format: str,
     tile_size: int,
     tile_pad: int,
     device: str,
     progress=gr.Progress(track_tqdm=False),
 ):
     if image is None:
-        return None, None, None, "Error: Please upload an image.", gpu_status_html()
+        return None, None, None, None, "Error: Please upload an image.", gpu_status_html()
 
     if tile_size < 64 or tile_size % 8 != 0:
-        return None, None, None, "Error: tile size must be at least 64 and divisible by 8.", gpu_status_html()
+        return None, None, None, None, "Error: tile size must be at least 64 and divisible by 8.", gpu_status_html()
 
     if tile_pad < 0 or tile_pad >= tile_size:
-        return None, None, None, "Error: tile padding must be smaller than tile size.", gpu_status_html()
+        return None, None, None, None, "Error: tile padding must be smaller than tile size.", gpu_status_html()
+
+    selected_format = (output_format or "PNG").strip().upper()
+    if selected_format not in {"PNG", "JPG"}:
+        selected_format = "PNG"
 
     source = image.convert("RGB").copy()
     start_time = time.monotonic()
@@ -460,20 +554,22 @@ def run_psr(
 
         progress(0.96, desc="Finalizing output")
         output_image = bgr_to_image(output_bgr)
+        download_path = save_download_image(output_image, selected_format)
         elapsed = format_seconds(time.monotonic() - start_time)
         log = (
             f"Done in {elapsed}\n"
             f"Input: {width} x {height}\n"
             f"Output: {output_size}\n"
+            f"Download format: {selected_format}\n"
             f"Tile size: {tile_size}\n"
             f"Tile padding: {tile_pad}\n"
             f"Device: {resolve_device(device)}\n"
             f"Detail enhancement: {'on' if enhance_detail else 'off'}"
         )
         progress(1.0, desc="Done")
-        return output_image, source, output_image.copy(), log, gpu_status_html()
+        return output_image, source, output_image.copy(), download_path, log, gpu_status_html()
     except Exception as exc:
-        return None, source, None, f"Error: {exc}", gpu_status_html()
+        return None, source, None, None, f"Error: {exc}", gpu_status_html()
 
 
 def build_ui() -> gr.Blocks:
@@ -482,66 +578,73 @@ def build_ui() -> gr.Blocks:
     if torch.cuda.is_available():
         device_choices.insert(1, DEFAULT_CUDA_DEVICE)
 
-    with gr.Blocks(title="Pure PSR Studio", css=APP_CSS) as demo:
+    with gr.Blocks(title="Lumi Restore Studio", css=APP_CSS) as demo:
         with gr.Column(elem_classes="app-shell"):
             with gr.Row(elem_classes="topbar"):
                 gr.HTML(
                     """
                     <div class="brand">
-                        <div class="brand-mark">PSR</div>
+                        <div class="brand-mark">LR</div>
                         <div>
-                            <h1 class="brand-title">Pure PSR Studio</h1>
-                            <div class="brand-subtitle">Real-ESRGAN x4 restoration workspace</div>
+                            <h1 class="brand-title">Lumi Restore Studio</h1>
+                            <div class="brand-subtitle">Soft x4 photo restoration</div>
                         </div>
                     </div>
                     """
                 )
                 with gr.Row(elem_classes="top-actions"):
-                    gr.HTML("<div class='mode-chip'>Tiled x4</div>")
+                    gr.HTML("<div class='mode-chip'>Ready to restore</div>")
                     gpu_status = gr.HTML(gpu_status_html())
 
             with gr.Row(elem_classes="workbench"):
                 with gr.Column(elem_classes="control-panel", scale=0, min_width=300):
-                    gr.Markdown("### Controls", elem_classes="panel-heading")
-                    input_image = gr.Image(label="Input", type="pil", height=300)
-                    enhance_detail = gr.Checkbox(label="Detail enhancement", value=True)
-                    tile_size = gr.Slider(
-                        label="Tile size",
-                        minimum=64,
-                        maximum=512,
-                        value=256,
-                        step=8,
+                    gr.Markdown("### Your Photo", elem_classes="panel-heading")
+                    input_image = make_preview_image("Upload", 300)
+                    enhance_detail = gr.Checkbox(label="Soft detail polish", value=True)
+                    output_format = gr.Radio(
+                        label="Save as",
+                        choices=["PNG", "JPG"],
+                        value="PNG",
                     )
-                    tile_pad = gr.Slider(
-                        label="Tile padding",
-                        minimum=0,
-                        maximum=64,
-                        value=16,
-                        step=1,
-                    )
-                    device = gr.Dropdown(
-                        label="Device",
-                        choices=device_choices,
-                        value=default_device,
-                        allow_custom_value=True,
-                    )
-                    run_button = gr.Button("Run x4 upscale", variant="primary", elem_id="run-button")
-                    refresh_button = gr.Button("Refresh GPU status", variant="secondary", elem_id="refresh-button")
+                    with gr.Accordion("Fine details", open=False):
+                        tile_size = gr.Slider(
+                            label="Render tile size",
+                            minimum=64,
+                            maximum=512,
+                            value=256,
+                            step=8,
+                        )
+                        tile_pad = gr.Slider(
+                            label="Edge blending",
+                            minimum=0,
+                            maximum=64,
+                            value=16,
+                            step=1,
+                        )
+                        device = gr.Dropdown(
+                            label="Processing device",
+                            choices=device_choices,
+                            value=default_device,
+                            allow_custom_value=True,
+                        )
+                    run_button = gr.Button("Restore photo", variant="primary", elem_id="run-button")
+                    refresh_button = gr.Button("Refresh status", variant="secondary", elem_id="refresh-button")
 
                 with gr.Column(elem_classes="viewer-panel"):
                     gr.Markdown("### Before / After", elem_classes="panel-heading")
                     with gr.Row(elem_classes="viewer-grid"):
-                        before_image = gr.Image(label="Before", type="pil", height=520)
-                        after_image = gr.Image(label="After", type="pil", height=520)
+                        before_image = make_preview_image("Before", 520)
+                        after_image = make_preview_image("After", 520)
                     with gr.Row():
-                        output_image = gr.Image(label="Output", type="pil", height=360)
+                        output_image = make_preview_image("Restored", 360)
                     with gr.Column(elem_classes="status-panel"):
-                        logs = gr.Textbox(label="Render log", lines=7, interactive=False)
+                        download_file = gr.File(label="Download")
+                        logs = gr.Textbox(label="Session notes", lines=7, interactive=False)
 
             run_button.click(
                 fn=run_psr,
-                inputs=[input_image, enhance_detail, tile_size, tile_pad, device],
-                outputs=[output_image, before_image, after_image, logs, gpu_status],
+                inputs=[input_image, enhance_detail, output_format, tile_size, tile_pad, device],
+                outputs=[output_image, before_image, after_image, download_file, logs, gpu_status],
                 api_name="upscale",
             )
             refresh_button.click(fn=gpu_status_html, outputs=gpu_status, api_name="gpu_status")
