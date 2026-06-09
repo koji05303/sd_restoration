@@ -19,32 +19,56 @@ from pure_psr import DEFAULT_CUDA_DEVICE, PureSREngine
 
 
 APP_CSS = """
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&family=Manrope:wght@500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=JetBrains+Mono:wght@500;600&family=Manrope:wght@500;600;700;800;900&display=swap');
 
 :root {
-    --canvas: #f5efe8;
-    --panel: #fffaf4;
+    --canvas: #f7f3ee;
+    --panel: #fffaf7;
     --panel-raised: #ffffff;
-    --panel-soft: #f7eee7;
-    --ink: #2f2a27;
-    --muted: #8b7f77;
-    --quiet: #aa9d94;
-    --line: rgba(80, 57, 48, 0.12);
-    --line-strong: rgba(80, 57, 48, 0.2);
-    --accent: #d9798f;
-    --accent-strong: #c85f78;
-    --sage: #5d9b8d;
-    --gold: #c39a4e;
+    --panel-soft: #f8efe7;
+    --ink: #2c2824;
+    --muted: #81756d;
+    --quiet: #a5968d;
+    --line: rgba(78, 55, 42, 0.12);
+    --line-strong: rgba(78, 55, 42, 0.2);
+    --accent: #bd7256;
+    --accent-strong: #9d563e;
+    --accent-soft: rgba(189, 114, 86, 0.13);
+    --sage: #4f8f82;
+    --gold: #b78a43;
     --danger: #c85a50;
-    --shadow: 0 24px 70px rgba(94, 64, 49, 0.16);
-    --shadow-soft: 0 12px 34px rgba(94, 64, 49, 0.1);
+    --shadow: 0 24px 70px rgba(93, 67, 53, 0.14);
+    --shadow-soft: 0 12px 34px rgba(93, 67, 53, 0.09);
+}
+
+html,
+html.dark,
+body,
+body.dark,
+.dark,
+.gradio-container,
+.gradio-container.dark {
+    color-scheme: light !important;
+    --body-background-fill: #f7f3ee !important;
+    --body-text-color: #2c2824 !important;
+    --background-fill-primary: #fffaf7 !important;
+    --background-fill-secondary: #f8efe7 !important;
+    --block-background-fill: rgba(255, 255, 255, 0.76) !important;
+    --block-border-color: rgba(78, 55, 42, 0.12) !important;
+    --border-color-primary: rgba(78, 55, 42, 0.12) !important;
+    --border-color-accent: rgba(189, 114, 86, 0.28) !important;
+    --input-background-fill: #f8efe7 !important;
+    --input-border-color: rgba(78, 55, 42, 0.12) !important;
+    --button-secondary-background-fill: #f8efe7 !important;
+    --button-secondary-text-color: #2c2824 !important;
+    --link-text-color: #9d563e !important;
 }
 
 body,
 .gradio-container {
     background: var(--canvas) !important;
     color: var(--ink) !important;
-    color-scheme: light;
+    color-scheme: light !important;
     font-family: Manrope, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -54,8 +78,8 @@ body,
     margin: 0 !important;
     padding: 20px !important;
     background:
-        radial-gradient(circle at 10% 0%, rgba(217, 121, 143, 0.16), rgba(217, 121, 143, 0) 28%),
-        linear-gradient(180deg, rgba(255, 250, 244, 0.86), rgba(245, 239, 232, 1) 44%),
+        radial-gradient(circle at 10% 0%, rgba(189, 114, 86, 0.14), rgba(189, 114, 86, 0) 28%),
+        linear-gradient(180deg, rgba(255, 251, 246, 0.9), rgba(247, 243, 238, 1) 44%),
         var(--canvas) !important;
 }
 
@@ -68,7 +92,7 @@ body,
     padding: 14px;
     border: 1px solid var(--line);
     border-radius: 8px;
-    background: rgba(255, 250, 244, 0.86);
+    background: rgba(255, 250, 245, 0.88);
     box-shadow: var(--shadow);
 }
 
@@ -98,9 +122,9 @@ body,
     height: 44px;
     place-items: center;
     flex: 0 0 auto;
-    border: 1px solid rgba(84, 214, 189, 0.3);
+    border: 1px solid rgba(189, 114, 86, 0.24);
     border-radius: 8px;
-    background: #fff1f3;
+    background: #fff2e9;
     color: var(--accent-strong);
     font-size: 0.74rem;
     font-weight: 900;
@@ -109,8 +133,9 @@ body,
 .brand-title {
     margin: 0;
     color: var(--ink);
-    font-size: 1.18rem;
-    font-weight: 800;
+    font-family: Fraunces, Georgia, serif;
+    font-size: 1.28rem;
+    font-weight: 700;
     letter-spacing: 0;
     line-height: 1.05;
 }
@@ -137,7 +162,7 @@ body,
     padding: 8px 10px;
     border: 1px solid rgba(93, 155, 141, 0.26);
     border-radius: 8px;
-    background: rgba(93, 155, 141, 0.12);
+    background: rgba(93, 155, 141, 0.13);
     color: #416f66;
     font-size: 0.74rem;
     font-weight: 900;
@@ -193,6 +218,121 @@ body,
     background: linear-gradient(90deg, var(--sage), var(--accent));
 }
 
+.hero-panel {
+    display: grid !important;
+    grid-template-columns: minmax(0, 1.5fr) minmax(280px, 0.86fr);
+    gap: 14px;
+    align-items: stretch;
+}
+
+.hero-panel > .gr-html {
+    min-width: 0;
+}
+
+.hero-card,
+.hero-note {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.7);
+    box-shadow: var(--shadow-soft);
+}
+
+.hero-card {
+    padding: 24px 26px;
+}
+
+.hero-note {
+    padding: 22px;
+}
+
+.eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 10px;
+    border: 1px solid rgba(189, 114, 86, 0.16);
+    border-radius: 8px;
+    background: var(--accent-soft);
+    color: var(--accent-strong);
+    font-size: 0.74rem;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.eyebrow::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, #d99972, #9d563e);
+    box-shadow: 0 0 0 5px rgba(189, 114, 86, 0.13);
+}
+
+.hero-title {
+    margin: 16px 0 12px;
+    color: var(--ink);
+    font-family: Fraunces, Georgia, serif;
+    font-size: clamp(2.6rem, 5vw, 4.6rem);
+    font-weight: 700;
+    line-height: 0.95;
+    letter-spacing: 0;
+}
+
+.hero-copy,
+.note-copy {
+    margin: 0;
+    color: var(--muted);
+    font-size: 1rem;
+    line-height: 1.75;
+}
+
+.metric-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 22px;
+}
+
+.metric-card {
+    padding: 13px 14px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: rgba(255, 250, 246, 0.84);
+}
+
+.metric-label {
+    color: var(--quiet);
+    font-size: 0.72rem;
+    font-weight: 900;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.metric-value {
+    margin-top: 7px;
+    color: var(--ink);
+    font-family: Fraunces, Georgia, serif;
+    font-size: 1.25rem;
+    line-height: 1.1;
+}
+
+.note-title {
+    margin: 0 0 10px;
+    color: var(--ink);
+    font-family: Fraunces, Georgia, serif;
+    font-size: 1.38rem;
+    line-height: 1.12;
+}
+
+.note-list {
+    margin: 14px 0 0;
+    padding-left: 18px;
+    color: var(--muted);
+    font-size: 0.92rem;
+    line-height: 1.72;
+}
+
 .workbench {
     display: grid;
     grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
@@ -225,8 +365,9 @@ body,
 .panel-heading {
     margin: 0 0 12px !important;
     color: var(--ink) !important;
-    font-size: 0.92rem !important;
-    font-weight: 800 !important;
+    font-family: Fraunces, Georgia, serif !important;
+    font-size: 1.22rem !important;
+    font-weight: 700 !important;
     letter-spacing: 0 !important;
 }
 
@@ -274,10 +415,10 @@ body,
     min-height: 48px !important;
     border: 0 !important;
     border-radius: 8px !important;
-    background: var(--accent) !important;
+    background: linear-gradient(135deg, var(--accent-strong), var(--accent)) !important;
     color: #fffaf4 !important;
     font-weight: 900 !important;
-    box-shadow: 0 14px 30px rgba(217, 121, 143, 0.26) !important;
+    box-shadow: 0 14px 30px rgba(157, 86, 62, 0.22) !important;
 }
 
 #run-button:hover {
@@ -345,6 +486,14 @@ body,
     .workbench {
         grid-template-columns: 1fr;
     }
+
+    .hero-panel {
+        grid-template-columns: 1fr;
+    }
+
+    .metric-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 @media (max-width: 580px) {
@@ -365,6 +514,15 @@ body,
         align-items: stretch;
     }
 
+    .hero-card,
+    .hero-note {
+        padding: 18px;
+    }
+
+    .hero-title {
+        font-size: clamp(2.1rem, 13vw, 3.1rem);
+    }
+
     .gpu-row {
         grid-template-columns: 1fr;
         gap: 4px;
@@ -374,6 +532,31 @@ body,
         white-space: normal;
     }
 }
+"""
+
+LIGHT_MODE_HEAD = """
+<script>
+(() => {
+    const forceLight = () => {
+        document.documentElement.classList.remove("dark");
+        document.documentElement.classList.add("light");
+        document.body?.classList.remove("dark");
+        document.body?.classList.add("light");
+        try {
+            localStorage.setItem("theme", "light");
+            localStorage.setItem("__theme", "light");
+            localStorage.setItem("gradio.theme", "light");
+        } catch (_) {}
+    };
+
+    forceLight();
+    document.addEventListener("DOMContentLoaded", forceLight);
+    new MutationObserver(forceLight).observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["class"],
+    });
+})();
+</script>
 """
 
 
@@ -578,7 +761,21 @@ def build_ui() -> gr.Blocks:
     if torch.cuda.is_available():
         device_choices.insert(1, DEFAULT_CUDA_DEVICE)
 
-    with gr.Blocks(title="Lumi Restore Studio", css=APP_CSS) as demo:
+    theme = gr.themes.Soft(
+        primary_hue="orange",
+        secondary_hue="teal",
+        neutral_hue="stone",
+    )
+
+    blocks_kwargs = {
+        "title": "Lumi Restore Studio",
+        "css": APP_CSS,
+        "theme": theme,
+    }
+    if "head" in inspect.signature(gr.Blocks).parameters:
+        blocks_kwargs["head"] = LIGHT_MODE_HEAD
+
+    with gr.Blocks(**blocks_kwargs) as demo:
         with gr.Column(elem_classes="app-shell"):
             with gr.Row(elem_classes="topbar"):
                 gr.HTML(
@@ -587,7 +784,7 @@ def build_ui() -> gr.Blocks:
                         <div class="brand-mark">LR</div>
                         <div>
                             <h1 class="brand-title">Lumi Restore Studio</h1>
-                            <div class="brand-subtitle">Soft x4 photo restoration</div>
+                            <div class="brand-subtitle">Pure x4 photo restoration</div>
                         </div>
                     </div>
                     """
@@ -595,6 +792,50 @@ def build_ui() -> gr.Blocks:
                 with gr.Row(elem_classes="top-actions"):
                     gr.HTML("<div class='mode-chip'>Ready to restore</div>")
                     gpu_status = gr.HTML(gpu_status_html())
+
+            with gr.Row(elem_classes="hero-panel"):
+                gr.HTML(
+                    """
+                    <section class="hero-card">
+                        <div class="eyebrow">Pure SR Workspace</div>
+                        <h2 class="hero-title">Lumi Restore Studio</h2>
+                        <p class="hero-copy">
+                            A bright restoration desk for Real-ESRGAN x4 upscaling,
+                            tile-safe rendering, soft detail polish, and clean before-after review.
+                        </p>
+                        <div class="metric-grid">
+                            <div class="metric-card">
+                                <div class="metric-label">Scale</div>
+                                <div class="metric-value">4x SR</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-label">Engine</div>
+                                <div class="metric-value">RRDBNet</div>
+                            </div>
+                            <div class="metric-card">
+                                <div class="metric-label">Output</div>
+                                <div class="metric-value">PNG / JPG</div>
+                            </div>
+                        </div>
+                    </section>
+                    """
+                )
+                gr.HTML(
+                    """
+                    <aside class="hero-note">
+                        <h3 class="note-title">Restoration Notes</h3>
+                        <p class="note-copy">
+                            Upload an image, choose the output format, and run the restore pass.
+                            GPU usage stays visible while tiled inference keeps larger images manageable.
+                        </p>
+                        <ul class="note-list">
+                            <li>Detail polish uses a light unsharp mask after upscaling.</li>
+                            <li>Tile controls are available for memory-sensitive renders.</li>
+                            <li>Before and after panes keep the review path direct.</li>
+                        </ul>
+                    </aside>
+                    """
+                )
 
             with gr.Row(elem_classes="workbench"):
                 with gr.Column(elem_classes="control-panel", scale=0, min_width=300):
