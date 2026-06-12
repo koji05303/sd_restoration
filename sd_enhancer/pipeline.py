@@ -1,0 +1,334 @@
+import random
+from pathlib import Path
+from typing import Optional
+
+import numpy as np
+import torch
+from diffusers import DDIMScheduler, ControlNetModel, StableDiffusionControlNetImg2ImgPipeline
+from PIL import Image, ImageEnhance, ImageFilter, ImageStat
+
+from .config import EnhanceConfig
+from .io import save_image, write_metadata_sidecar
+from .tiling import build_blend_mask, compute_tile_starts, round_up_to_multiple
+
+
+class SafetyCheckerTriggeredError(RuntimeError):
+    pass
+
+
+def resolve_device(device_choice: str) -> str:
+    if device_choice == "auto":
+        return "cuda" if torch.cuda.is_available() else "cpu"
+
+    if device_choice == "cuda" and not torch.cuda.is_available():
+        raise RuntimeError("CUDA requested but no CUDA-capable GPU is available.")
+
+    return device_choice
+
+
+def resolve_dtype(dtype_choice, device: str):
+    if not isinstance(dtype_choice, str):
+        return dtype_choice
+
+    if dtype_choice == "auto":
+        return torch.float16 if device == "cuda" else torch.float32
+
+    if dtype_choice == "fp16" and device == "cpu":
+        print("[Warning] fp16 on CPU is not supported by many ops. Falling back to fp32.")
+        return torch.float32
+
+    return torch.float16 if dtype_choice == "fp16" else torch.float32
+
+
+def enable_low_vram_optimizations(pipe: StableDiffusionControlNetImg2ImgPipeline) -> None:
+    # Keep attention memory bounded when xFormers is unavailable or insufficient.
+    pipe.enable_attention_slicing()
+
+    try:
+        if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
+            pipe.vae.enable_tiling()
+            print("Enabled VAE tiling.")
+        elif hasattr(pipe, "enable_vae_tiled_decode"):
+            pipe.enable_vae_tiled_decode()
+            print("Enabled VAE tiled decode.")
+        elif hasattr(pipe, "enable_vae_tiling"):
+            pipe.enable_vae_tiling()
+            print("Enabled VAE tiling (compat mode).")
+        else:
+            print("[Warning] This diffusers version does not expose VAE tiled decode/tiling APIs.")
+    except Exception as exc:
+        print(f"[Warning] Failed to enable VAE tiled decode/tiling: {exc}")
+
+    try:
+        if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_slicing"):
+            pipe.vae.enable_slicing()
+            print("Enabled VAE slicing.")
+        else:
+            pipe.enable_vae_slicing()
+            print("Enabled VAE slicing (compat mode).")
+    except Exception as exc:
+        print(f"[Warning] Failed to enable VAE slicing: {exc}")
+
+
+def create_pipeline(config: EnhanceConfig) -> StableDiffusionControlNetImg2ImgPipeline:
+    config.device = resolve_device(config.device)
+    config.dtype = resolve_dtype(config.dtype, config.device)
+
+    print("Initializing model...")
+    if config.device == "cuda":
+        print(f"CUDA Device: {torch.cuda.get_device_name(0)}")
+    else:
+        print("Device: CPU")
+
+    controlnet = ControlNetModel.from_pretrained(config.controlnet_id, torch_dtype=config.dtype)
+
+    pipe = StableDiffusionControlNetImg2ImgPipeline.from_pretrained(
+        config.model_id,
+        controlnet=controlnet,
+        torch_dtype=config.dtype,
+        use_safetensors=True,
+    )
+
+    pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
+    enable_low_vram_optimizations(pipe)
+    pipe = pipe.to(config.device)
+
+    if config.device == "cuda" and config.use_xformers:
+        try:
+            pipe.enable_xformers_memory_efficient_attention()
+            print("Enabled xFormers memory efficient attention.")
+        except Exception as exc:
+            print(f"[Warning] Failed to enable xFormers: {exc}")
+            print("[Info] Falling back to attention slicing + VAE tiling/slicing.")
+
+    return pipe
+
+
+def is_near_black_image(image: Image.Image, mean_threshold: float = 2.0) -> bool:
+    rgb_image = image.convert("RGB")
+    channel_means = ImageStat.Stat(rgb_image).mean
+    return max(channel_means) <= mean_threshold
+
+
+def upgrade_vae_decode_precision(pipe: StableDiffusionControlNetImg2ImgPipeline) -> bool:
+    try:
+        if hasattr(pipe, "upcast_vae"):
+            pipe.upcast_vae()
+        else:
+            pipe.vae.to(dtype=torch.float32)
+        print("[Info] Upgraded VAE decode precision to FP32.")
+        return True
+    except Exception as exc:
+        print(f"[Warning] Failed to upgrade VAE decode precision: {exc}")
+        return False
+
+
+def derive_tile_seed(
+    config: EnhanceConfig,
+    tile_index: int,
+    random_seed_source: Optional[random.Random],
+) -> Optional[int]:
+    if config.seed is None:
+        return None
+
+    if config.tile_seed_mode == "same":
+        return config.seed
+
+    if config.tile_seed_mode == "offset":
+        return config.seed + tile_index
+
+    if random_seed_source is None:
+        return None
+
+    return random_seed_source.randrange(0, 2**32 - 1)
+
+
+def make_generator(config: EnhanceConfig, tile_seed: Optional[int]) -> Optional[torch.Generator]:
+    if tile_seed is None:
+        return None
+    return torch.Generator(device=config.device).manual_seed(tile_seed)
+
+
+def match_color_to_reference(image: Image.Image, reference: Image.Image) -> Image.Image:
+    image_arr = np.asarray(image.convert("RGB"), dtype=np.float32)
+    reference_arr = np.asarray(reference.resize(image.size, Image.Resampling.LANCZOS).convert("RGB"), dtype=np.float32)
+
+    image_mean = image_arr.mean(axis=(0, 1))
+    image_std = image_arr.std(axis=(0, 1))
+    reference_mean = reference_arr.mean(axis=(0, 1))
+    reference_std = reference_arr.std(axis=(0, 1))
+
+    scale = np.divide(
+        reference_std,
+        image_std,
+        out=np.ones_like(reference_std),
+        where=image_std > 1e-6,
+    )
+    matched = (image_arr - image_mean) * scale + reference_mean
+    return Image.fromarray(np.clip(matched, 0.0, 255.0).astype(np.uint8), mode="RGB")
+
+
+def apply_postprocess(
+    output_image: Image.Image,
+    reference_image: Image.Image,
+    config: EnhanceConfig,
+) -> Image.Image:
+    if config.match_color_input:
+        print("[Postprocess] Matching output color to input.")
+        output_image = match_color_to_reference(output_image, reference_image)
+
+    if config.contrast:
+        print("[Postprocess] Applying contrast.")
+        output_image = ImageEnhance.Contrast(output_image).enhance(1.06)
+
+    if config.sharpen:
+        print("[Postprocess] Applying sharpen.")
+        output_image = output_image.filter(ImageFilter.UnsharpMask(radius=1.2, percent=120, threshold=3))
+
+    return output_image
+
+
+def enhance_image(
+    config: EnhanceConfig,
+    pipe: Optional[StableDiffusionControlNetImg2ImgPipeline] = None,
+) -> Path:
+    if pipe is None:
+        pipe = create_pipeline(config)
+
+    init_image = Image.open(config.image_path).convert("RGB")
+    width, height = init_image.size
+
+    target_width = round_up_to_multiple(width * config.upscale_factor, base=64)
+    target_height = round_up_to_multiple(height * config.upscale_factor, base=64)
+    resized_image = init_image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+
+    print(f"Enhancing image from {width}x{height} to {target_width}x{target_height} ...")
+
+    tile_width = min(config.tile_size, target_width)
+    tile_height = min(config.tile_size, target_height)
+    overlap_x = min(config.tile_overlap, max(tile_width - 1, 0))
+    overlap_y = min(config.tile_overlap, max(tile_height - 1, 0))
+
+    x_starts = compute_tile_starts(target_width, tile_width, overlap_x)
+    y_starts = compute_tile_starts(target_height, tile_height, overlap_y)
+    total_tiles = len(x_starts) * len(y_starts)
+
+    print(
+        f"[Info] Tiled inference: tile={tile_width}x{tile_height}, "
+        f"overlap={overlap_x}x{overlap_y}, total_tiles={total_tiles}"
+    )
+
+    if config.seed is not None:
+        print(f"Using seed: {config.seed} (tile mode: {config.tile_seed_mode})")
+
+    accumulator = np.zeros((target_height, target_width, 3), dtype=np.float32)
+    weights = np.zeros((target_height, target_width), dtype=np.float32)
+    random_seed_source = random.Random(config.seed) if config.tile_seed_mode == "random" and config.seed is not None else None
+
+    def run_generation_once(tile_image: Image.Image, tile_seed: Optional[int]):
+        generator = make_generator(config, tile_seed)
+
+        with torch.inference_mode():
+            return pipe(
+                prompt=config.prompt,
+                negative_prompt=config.negative_prompt,
+                image=tile_image,
+                control_image=tile_image,
+                controlnet_conditioning_scale=config.conditioning_scale,
+                strength=config.strength,
+                num_inference_steps=config.steps,
+                guidance_scale=config.guidance_scale,
+                generator=generator,
+            )
+
+    vae_upgraded = False
+    tile_counter = 0
+    fallback_tiles: list[tuple[int, int, str]] = []
+
+    for y in y_starts:
+        for x in x_starts:
+            tile_counter += 1
+            tile_seed = derive_tile_seed(config, tile_counter, random_seed_source)
+            box = (x, y, x + tile_width, y + tile_height)
+            tile_image = resized_image.crop(box)
+            use_input_tile_fallback = False
+            fallback_reason = ""
+
+            result = run_generation_once(tile_image, tile_seed)
+            output_tile = result.images[0]
+            nsfw_flags = getattr(result, "nsfw_content_detected", None)
+
+            if nsfw_flags and any(flag is True for flag in nsfw_flags):
+                use_input_tile_fallback = True
+                fallback_reason = "safety-checker"
+
+            if not use_input_tile_fallback and is_near_black_image(output_tile):
+                print(f"[Warning] Near-black tile detected at ({x}, {y}).")
+                if config.dtype == torch.float16 and not vae_upgraded:
+                    print("[Info] Retrying tile once with FP32 VAE decode...")
+                    vae_upgraded = upgrade_vae_decode_precision(pipe)
+                    if vae_upgraded:
+                        result = run_generation_once(tile_image, tile_seed)
+                        output_tile = result.images[0]
+                        nsfw_flags = getattr(result, "nsfw_content_detected", None)
+
+            if nsfw_flags and any(flag is True for flag in nsfw_flags):
+                use_input_tile_fallback = True
+                fallback_reason = "safety-checker-retry"
+
+            if not use_input_tile_fallback and is_near_black_image(output_tile):
+                use_input_tile_fallback = True
+                fallback_reason = "near-black-retry"
+
+            if use_input_tile_fallback:
+                output_tile = tile_image.copy()
+                fallback_tiles.append((x, y, fallback_reason))
+                print(f"[Warning] Reusing original tile at ({x}, {y}) due to {fallback_reason}.")
+
+            if output_tile.size != (tile_width, tile_height):
+                output_tile = output_tile.resize((tile_width, tile_height), Image.Resampling.LANCZOS)
+
+            output_tile_arr = np.asarray(output_tile.convert("RGB"), dtype=np.float32)
+            blend_mask = build_blend_mask(
+                tile_width,
+                tile_height,
+                overlap_x,
+                overlap_y,
+                has_left=(x > 0),
+                has_right=(x + tile_width < target_width),
+                has_top=(y > 0),
+                has_bottom=(y + tile_height < target_height),
+            )
+
+            accumulator[y : y + tile_height, x : x + tile_width, :] += output_tile_arr * blend_mask[:, :, None]
+            weights[y : y + tile_height, x : x + tile_width] += blend_mask
+
+            print(f"[Tile {tile_counter}/{total_tiles}] Completed at ({x}, {y})")
+
+            if config.device == "cuda":
+                torch.cuda.empty_cache()
+
+    safe_weights = np.maximum(weights, 1e-6)
+    output_array = np.clip(accumulator / safe_weights[:, :, None], 0.0, 255.0).astype(np.uint8)
+    output_image = Image.fromarray(output_array, mode="RGB")
+    output_image = apply_postprocess(output_image, resized_image, config)
+
+    if fallback_tiles:
+        print(f"[Warning] Reused original content for {len(fallback_tiles)} tile(s).")
+
+    if is_near_black_image(output_image):
+        raise RuntimeError(
+            "Output remains near-black after tiled generation. "
+            "Try --dtype fp32, lower --guidance-scale, or different model weights."
+        )
+
+    save_image(output_image, config.output_path)
+    sidecar_path = write_metadata_sidecar(
+        config=config,
+        input_size=(width, height),
+        output_size=(target_width, target_height),
+        fallback_tiles=fallback_tiles,
+    )
+    print(f"Enhanced image saved to: {config.output_path}")
+    print(f"Metadata saved to: {sidecar_path}")
+    return config.output_path
