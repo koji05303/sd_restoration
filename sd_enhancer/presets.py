@@ -10,12 +10,12 @@ class EnhancementPreset:
     model_id: str = DEFAULT_MODEL_ID
     controlnet_id: str = DEFAULT_CONTROLNET_ID
     upscale_factor: float = 2.0
-    strength: float = 0.35
-    conditioning_scale: float = 1.0
-    guidance_scale: float = 7.5
+    strength: float = 0.25
+    conditioning_scale: float = 1.3
+    guidance_scale: float = 5.5
     steps: int = 25
     tile_size: int = 512
-    tile_overlap: int = 64
+    tile_overlap: int = 128
     tile_seed_mode: str = "same"
 
 
@@ -104,21 +104,19 @@ UPSCALE_PRESET = EnhancementPreset(
         "watermark"
     ),
     upscale_factor=4.0,
-    strength=0.28,
-    guidance_scale=6.5,
+    strength=0.25,
+    guidance_scale=5.5,
     steps=24,
-    tile_overlap=96,
 )
 
 LOW_VRAM_PRESET = EnhancementPreset(
     prompt=DEFAULT_PROMPT,
     negative_prompt=DEFAULT_NEGATIVE_PROMPT,
     upscale_factor=2.0,
-    strength=0.32,
-    guidance_scale=6.0,
+    strength=0.25,
+    guidance_scale=5.5,
     steps=20,
     tile_size=384,
-    tile_overlap=96,
 )
 
 PRESETS = {

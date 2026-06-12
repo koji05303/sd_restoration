@@ -191,6 +191,17 @@ def create_parser() -> argparse.ArgumentParser:
         default=None,
         help="How tile seeds are derived from --seed.",
     )
+    generation_group.add_argument(
+        "--skin-protect",
+        action="store_true",
+        help="Use a feathered skin mask to blend low-strength skin with normal-detail non-skin areas.",
+    )
+    generation_group.add_argument(
+        "--skin-strength",
+        type=float_in_range(0.0, 1.0),
+        default=0.18,
+        help="Denoising strength used inside detected skin regions when --skin-protect is enabled.",
+    )
 
     postprocess_group = parser.add_argument_group("Postprocess options")
     postprocess_group.add_argument(
@@ -287,6 +298,8 @@ def build_config(args: argparse.Namespace, image_path: Path, output_path: Path) 
             else preset.tile_seed_mode
         ),
         preset=args.preset,
+        skin_protect=args.skin_protect,
+        skin_strength=args.skin_strength,
         sharpen=args.sharpen,
         contrast=args.contrast,
         match_color_input=args.match_color_input,

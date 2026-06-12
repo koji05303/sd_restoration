@@ -149,6 +149,54 @@ def make_generator(config: EnhanceConfig, tile_seed: Optional[int]) -> Optional[
     return torch.Generator(device=config.device).manual_seed(tile_seed)
 
 
+def detect_skin_mask(image: Image.Image) -> np.ndarray:
+    rgb = np.asarray(image.convert("RGB"), dtype=np.float32)
+    ycbcr = np.asarray(image.convert("YCbCr"), dtype=np.float32)
+
+    red = rgb[:, :, 0]
+    green = rgb[:, :, 1]
+    blue = rgb[:, :, 2]
+    cb = ycbcr[:, :, 1]
+    cr = ycbcr[:, :, 2]
+    channel_span = rgb.max(axis=2) - rgb.min(axis=2)
+
+    ycbcr_skin = (cb >= 77.0) & (cb <= 135.0) & (cr >= 133.0) & (cr <= 180.0)
+    rgb_skin = (
+        (red > 60.0)
+        & (green > 35.0)
+        & (blue > 20.0)
+        & (red >= green * 0.95)
+        & (red >= blue * 1.05)
+        & (channel_span > 10.0)
+    )
+    skin = ycbcr_skin & rgb_skin
+
+    if not skin.any():
+        return np.zeros((image.height, image.width), dtype=np.float32)
+
+    mask_image = Image.fromarray((skin.astype(np.uint8) * 255), mode="L")
+    mask_image = mask_image.filter(ImageFilter.MaxFilter(7))
+    mask_image = mask_image.filter(ImageFilter.GaussianBlur(radius=18))
+    return np.asarray(mask_image, dtype=np.float32) / 255.0
+
+
+def skin_mask_coverage(mask: np.ndarray, threshold: float = 0.15) -> float:
+    if mask.size == 0:
+        return 0.0
+    return float(np.count_nonzero(mask > threshold) / mask.size)
+
+
+def blend_skin_tiles(normal_tile: Image.Image, skin_tile: Image.Image, skin_mask: np.ndarray) -> Image.Image:
+    if skin_tile.size != normal_tile.size:
+        skin_tile = skin_tile.resize(normal_tile.size, Image.Resampling.LANCZOS)
+
+    normal_arr = np.asarray(normal_tile.convert("RGB"), dtype=np.float32)
+    skin_arr = np.asarray(skin_tile.convert("RGB"), dtype=np.float32)
+    mask = np.clip(skin_mask, 0.0, 1.0)[:, :, None]
+    blended = (skin_arr * mask) + (normal_arr * (1.0 - mask))
+    return Image.fromarray(np.clip(blended, 0.0, 255.0).astype(np.uint8), mode="RGB")
+
+
 def match_color_to_reference(image: Image.Image, reference: Image.Image) -> Image.Image:
     image_arr = np.asarray(image.convert("RGB"), dtype=np.float32)
     reference_arr = np.asarray(reference.resize(image.size, Image.Resampling.LANCZOS).convert("RGB"), dtype=np.float32)
@@ -220,12 +268,17 @@ def enhance_image(
 
     if config.seed is not None:
         print(f"Using seed: {config.seed} (tile mode: {config.tile_seed_mode})")
+    if config.skin_protect:
+        print(f"[Info] Skin protect enabled: skin_strength={config.skin_strength}")
 
     accumulator = np.zeros((target_height, target_width, 3), dtype=np.float32)
     weights = np.zeros((target_height, target_width), dtype=np.float32)
     random_seed_source = random.Random(config.seed) if config.tile_seed_mode == "random" and config.seed is not None else None
 
-    def run_generation_once(tile_image: Image.Image, tile_seed: Optional[int]):
+    vae_upgraded = False
+    fallback_tiles: list[tuple[int, int, str]] = []
+
+    def run_generation_once(tile_image: Image.Image, tile_seed: Optional[int], strength: float):
         generator = make_generator(config, tile_seed)
 
         with torch.inference_mode():
@@ -235,15 +288,61 @@ def enhance_image(
                 image=tile_image,
                 control_image=tile_image,
                 controlnet_conditioning_scale=config.conditioning_scale,
-                strength=config.strength,
+                strength=strength,
                 num_inference_steps=config.steps,
                 guidance_scale=config.guidance_scale,
                 generator=generator,
             )
 
-    vae_upgraded = False
+    def generate_tile_with_fallback(
+        tile_image: Image.Image,
+        tile_seed: Optional[int],
+        x: int,
+        y: int,
+        strength: float,
+        pass_name: str,
+    ) -> Image.Image:
+        nonlocal vae_upgraded
+
+        use_input_tile_fallback = False
+        fallback_reason = ""
+        result = run_generation_once(tile_image, tile_seed, strength)
+        output_tile = result.images[0]
+        nsfw_flags = getattr(result, "nsfw_content_detected", None)
+
+        if nsfw_flags and any(flag is True for flag in nsfw_flags):
+            use_input_tile_fallback = True
+            fallback_reason = f"{pass_name}:safety-checker"
+
+        if not use_input_tile_fallback and is_near_black_image(output_tile):
+            print(f"[Warning] Near-black {pass_name} tile detected at ({x}, {y}).")
+            if config.dtype == torch.float16 and not vae_upgraded:
+                print("[Info] Retrying tile once with FP32 VAE decode...")
+                vae_upgraded = upgrade_vae_decode_precision(pipe)
+                if vae_upgraded:
+                    result = run_generation_once(tile_image, tile_seed, strength)
+                    output_tile = result.images[0]
+                    nsfw_flags = getattr(result, "nsfw_content_detected", None)
+
+        if nsfw_flags and any(flag is True for flag in nsfw_flags):
+            use_input_tile_fallback = True
+            fallback_reason = f"{pass_name}:safety-checker-retry"
+
+        if not use_input_tile_fallback and is_near_black_image(output_tile):
+            use_input_tile_fallback = True
+            fallback_reason = f"{pass_name}:near-black-retry"
+
+        if use_input_tile_fallback:
+            output_tile = tile_image.copy()
+            fallback_tiles.append((x, y, fallback_reason))
+            print(f"[Warning] Reusing original tile at ({x}, {y}) due to {fallback_reason}.")
+
+        if output_tile.size != tile_image.size:
+            output_tile = output_tile.resize(tile_image.size, Image.Resampling.LANCZOS)
+
+        return output_tile
+
     tile_counter = 0
-    fallback_tiles: list[tuple[int, int, str]] = []
 
     for y in y_starts:
         for x in x_starts:
@@ -251,42 +350,38 @@ def enhance_image(
             tile_seed = derive_tile_seed(config, tile_counter, random_seed_source)
             box = (x, y, x + tile_width, y + tile_height)
             tile_image = resized_image.crop(box)
-            use_input_tile_fallback = False
-            fallback_reason = ""
+            skin_mask = detect_skin_mask(tile_image) if config.skin_protect else None
+            skin_coverage = skin_mask_coverage(skin_mask) if skin_mask is not None else 0.0
 
-            result = run_generation_once(tile_image, tile_seed)
-            output_tile = result.images[0]
-            nsfw_flags = getattr(result, "nsfw_content_detected", None)
+            if skin_mask is not None and skin_coverage >= 0.98:
+                output_tile = generate_tile_with_fallback(
+                    tile_image,
+                    tile_seed,
+                    x,
+                    y,
+                    config.skin_strength,
+                    "skin",
+                )
+            else:
+                output_tile = generate_tile_with_fallback(
+                    tile_image,
+                    tile_seed,
+                    x,
+                    y,
+                    config.strength,
+                    "normal",
+                )
 
-            if nsfw_flags and any(flag is True for flag in nsfw_flags):
-                use_input_tile_fallback = True
-                fallback_reason = "safety-checker"
-
-            if not use_input_tile_fallback and is_near_black_image(output_tile):
-                print(f"[Warning] Near-black tile detected at ({x}, {y}).")
-                if config.dtype == torch.float16 and not vae_upgraded:
-                    print("[Info] Retrying tile once with FP32 VAE decode...")
-                    vae_upgraded = upgrade_vae_decode_precision(pipe)
-                    if vae_upgraded:
-                        result = run_generation_once(tile_image, tile_seed)
-                        output_tile = result.images[0]
-                        nsfw_flags = getattr(result, "nsfw_content_detected", None)
-
-            if nsfw_flags and any(flag is True for flag in nsfw_flags):
-                use_input_tile_fallback = True
-                fallback_reason = "safety-checker-retry"
-
-            if not use_input_tile_fallback and is_near_black_image(output_tile):
-                use_input_tile_fallback = True
-                fallback_reason = "near-black-retry"
-
-            if use_input_tile_fallback:
-                output_tile = tile_image.copy()
-                fallback_tiles.append((x, y, fallback_reason))
-                print(f"[Warning] Reusing original tile at ({x}, {y}) due to {fallback_reason}.")
-
-            if output_tile.size != (tile_width, tile_height):
-                output_tile = output_tile.resize((tile_width, tile_height), Image.Resampling.LANCZOS)
+                if skin_mask is not None and skin_coverage > 0.01:
+                    skin_tile = generate_tile_with_fallback(
+                        tile_image,
+                        tile_seed,
+                        x,
+                        y,
+                        config.skin_strength,
+                        "skin",
+                    )
+                    output_tile = blend_skin_tiles(output_tile, skin_tile, skin_mask)
 
             output_tile_arr = np.asarray(output_tile.convert("RGB"), dtype=np.float32)
             blend_mask = build_blend_mask(

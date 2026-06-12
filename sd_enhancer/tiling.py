@@ -36,16 +36,22 @@ def build_blend_mask(
     x_ramp = min(overlap_x, tile_width // 2)
     y_ramp = min(overlap_y, tile_height // 2)
 
+    def cosine_fade(length: int) -> np.ndarray:
+        t = np.linspace(0.0, 1.0, num=length, endpoint=False, dtype=np.float32)
+        return 0.5 - 0.5 * np.cos(np.pi * t)
+
     if x_ramp > 0:
+        x_fade = cosine_fade(x_ramp)
         if has_left:
-            mask_x[:x_ramp] = np.linspace(0.0, 1.0, num=x_ramp, endpoint=False, dtype=np.float32)
+            mask_x[:x_ramp] = x_fade
         if has_right:
-            mask_x[-x_ramp:] = np.linspace(1.0, 0.0, num=x_ramp, endpoint=False, dtype=np.float32)
+            mask_x[-x_ramp:] = 1.0 - x_fade
 
     if y_ramp > 0:
+        y_fade = cosine_fade(y_ramp)
         if has_top:
-            mask_y[:y_ramp] = np.linspace(0.0, 1.0, num=y_ramp, endpoint=False, dtype=np.float32)
+            mask_y[:y_ramp] = y_fade
         if has_bottom:
-            mask_y[-y_ramp:] = np.linspace(1.0, 0.0, num=y_ramp, endpoint=False, dtype=np.float32)
+            mask_y[-y_ramp:] = 1.0 - y_fade
 
     return np.outer(mask_y, mask_x)

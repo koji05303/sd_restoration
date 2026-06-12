@@ -88,6 +88,8 @@ def write_metadata_sidecar(
         "tile_size": config.tile_size,
         "tile_overlap": config.tile_overlap,
         "upscale_factor": config.upscale_factor,
+        "skin_protect": config.skin_protect,
+        "skin_strength": config.skin_strength,
         "device": config.device,
         "dtype": str(config.dtype).replace("torch.", ""),
         "use_xformers": config.use_xformers,

@@ -63,6 +63,8 @@ class EnhanceConfig:
     tile_overlap: int
     tile_seed_mode: str
     preset: str
+    skin_protect: bool
+    skin_strength: float
     sharpen: bool
     contrast: bool
     match_color_input: bool
