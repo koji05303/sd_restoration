@@ -3,7 +3,13 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from .config import EnhanceConfig, TILE_SEED_MODES, VALID_IMAGE_EXTENSIONS
+from .config import (
+    EnhanceConfig,
+    OFFLOAD_MODES,
+    SKIN_PROTECT_MODES,
+    TILE_SEED_MODES,
+    VALID_IMAGE_EXTENSIONS,
+)
 from .io import (
     collect_input_images,
     read_text_prompt,
@@ -194,13 +200,19 @@ def create_parser() -> argparse.ArgumentParser:
     generation_group.add_argument(
         "--skin-protect",
         action="store_true",
-        help="Use a feathered skin mask to blend low-strength skin with normal-detail non-skin areas.",
+        help="Protect detected skin with a full-image feathered mask.",
+    )
+    generation_group.add_argument(
+        "--skin-protect-mode",
+        choices=SKIN_PROTECT_MODES,
+        default="tone",
+        help="Skin protection strategy. tone is faster; dual-pass runs an extra low-strength SD pass.",
     )
     generation_group.add_argument(
         "--skin-strength",
         type=float_in_range(0.0, 1.0),
         default=0.18,
-        help="Denoising strength used inside detected skin regions when --skin-protect is enabled.",
+        help="Denoising strength used in dual-pass skin regions when --skin-protect is enabled.",
     )
 
     postprocess_group = parser.add_argument_group("Postprocess options")
@@ -237,6 +249,12 @@ def create_parser() -> argparse.ArgumentParser:
         "--disable-xformers",
         action="store_true",
         help="Disable xFormers memory efficient attention.",
+    )
+    runtime_group.add_argument(
+        "--offload",
+        choices=OFFLOAD_MODES,
+        default=None,
+        help="CPU offload mode. sequential saves the most VRAM but is slow.",
     )
     runtime_group.add_argument(
         "--overwrite",
@@ -299,7 +317,9 @@ def build_config(args: argparse.Namespace, image_path: Path, output_path: Path) 
         ),
         preset=args.preset,
         skin_protect=args.skin_protect,
+        skin_protect_mode=args.skin_protect_mode,
         skin_strength=args.skin_strength,
+        offload_mode=args.offload if args.offload is not None else preset.offload_mode,
         sharpen=args.sharpen,
         contrast=args.contrast,
         match_color_input=args.match_color_input,

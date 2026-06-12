@@ -1,0 +1,9 @@
+input/
+output/
+
+*.pt
+*.npy
+*.pth
+__pycache__/
+.venv/
+.DS_Store

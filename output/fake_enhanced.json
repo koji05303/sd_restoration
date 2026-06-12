@@ -6,14 +6,14 @@
     "height": 2000
   },
   "output_size": {
-    "width": 6016,
-    "height": 4032
+    "width": 6000,
+    "height": 4000
   },
   "preset": "photo",
   "model_id": "SG161222/Realistic_Vision_V5.1_noVAE",
   "controlnet_id": "lllyasviel/control_v11f1e_sd15_tile",
-  "prompt": "(masterpiece, best quality:1.2), photorealistic, 8k resolution, ultra-detailed skin texture, soft studio lighting, sharp focus, volumetric shadow, hyper-realistic, raw photo, subsurface scattering",
-  "negative_prompt": "(worst quality, low quality:1.4), blurry, bad anatomy, noise, painting, cartoon, 3d render, cg, digital art, compression artifacts, lowres, text, watermark, bad hands, missing fingers, ",
+  "prompt": "(best quality, high fidelity:1.15), faithful photographic enhancement, preserved identity and anatomy, natural skin tone, smooth skin color transition, subtle realistic detail, preserved lighting, clean edges",
+  "negative_prompt": "(worst quality, low quality:1.4), blurry, bad anatomy, noise, painting, cartoon, 3d render, cg, digital art, compression artifacts, lowres, text, watermark, bad hands, missing fingers, mottled skin, patchy skin tone, uneven skin texture, excessive pores, repeating texture, tile pattern, overprocessed skin, plastic skin",
   "seed": null,
   "tile_seed_mode": "same",
   "strength": 0.25,
@@ -25,7 +25,9 @@
   "tile_overlap": 128,
   "upscale_factor": 2.0,
   "skin_protect": false,
+  "skin_protect_mode": "tone",
   "skin_strength": 0.18,
+  "offload": "none",
   "device": "cuda",
   "dtype": "float16",
   "use_xformers": true,

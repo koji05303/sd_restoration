@@ -17,6 +17,7 @@ class EnhancementPreset:
     tile_size: int = 512
     tile_overlap: int = 128
     tile_seed_mode: str = "same"
+    offload_mode: str = "none"
 
 
 PHOTO_PRESET = EnhancementPreset(
@@ -117,6 +118,7 @@ LOW_VRAM_PRESET = EnhancementPreset(
     guidance_scale=5.5,
     steps=20,
     tile_size=384,
+    offload_mode="sequential",
 )
 
 PRESETS = {

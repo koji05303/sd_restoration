@@ -1,4 +1,5 @@
 import random
+import sys
 from pathlib import Path
 from typing import Optional
 
@@ -41,9 +42,6 @@ def resolve_dtype(dtype_choice, device: str):
 
 
 def enable_low_vram_optimizations(pipe: StableDiffusionControlNetImg2ImgPipeline) -> None:
-    # Keep attention memory bounded when xFormers is unavailable or insufficient.
-    pipe.enable_attention_slicing()
-
     try:
         if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
             pipe.vae.enable_tiling()
@@ -70,6 +68,50 @@ def enable_low_vram_optimizations(pipe: StableDiffusionControlNetImg2ImgPipeline
         print(f"[Warning] Failed to enable VAE slicing: {exc}")
 
 
+def enable_attention_backend(
+    pipe: StableDiffusionControlNetImg2ImgPipeline,
+    config: EnhanceConfig,
+) -> None:
+    if config.device == "cuda" and config.use_xformers:
+        try:
+            pipe.enable_xformers_memory_efficient_attention()
+            print("Enabled xFormers memory efficient attention.")
+            return
+        except Exception as exc:
+            print(f"[Warning] Failed to enable xFormers: {exc}")
+
+    try:
+        pipe.enable_attention_slicing()
+        print("Enabled attention slicing.")
+    except Exception as exc:
+        print(f"[Warning] Failed to enable attention slicing: {exc}")
+
+
+def place_pipeline(
+    pipe: StableDiffusionControlNetImg2ImgPipeline,
+    config: EnhanceConfig,
+) -> StableDiffusionControlNetImg2ImgPipeline:
+    if config.device != "cuda" and config.offload_mode != "none":
+        print("[Warning] CPU offload requires CUDA. Falling back to --offload none.")
+        config.offload_mode = "none"
+
+    if config.offload_mode == "sequential":
+        if not hasattr(pipe, "enable_sequential_cpu_offload"):
+            raise RuntimeError("This diffusers version does not support sequential CPU offload.")
+        pipe.enable_sequential_cpu_offload()
+        print("Enabled sequential CPU offload.")
+        return pipe
+
+    if config.offload_mode == "model":
+        if not hasattr(pipe, "enable_model_cpu_offload"):
+            raise RuntimeError("This diffusers version does not support model CPU offload.")
+        pipe.enable_model_cpu_offload()
+        print("Enabled model CPU offload.")
+        return pipe
+
+    return pipe.to(config.device)
+
+
 def create_pipeline(config: EnhanceConfig) -> StableDiffusionControlNetImg2ImgPipeline:
     config.device = resolve_device(config.device)
     config.dtype = resolve_dtype(config.dtype, config.device)
@@ -91,15 +133,8 @@ def create_pipeline(config: EnhanceConfig) -> StableDiffusionControlNetImg2ImgPi
 
     pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
     enable_low_vram_optimizations(pipe)
-    pipe = pipe.to(config.device)
-
-    if config.device == "cuda" and config.use_xformers:
-        try:
-            pipe.enable_xformers_memory_efficient_attention()
-            print("Enabled xFormers memory efficient attention.")
-        except Exception as exc:
-            print(f"[Warning] Failed to enable xFormers: {exc}")
-            print("[Info] Falling back to attention slicing + VAE tiling/slicing.")
+    enable_attention_backend(pipe, config)
+    pipe = place_pipeline(pipe, config)
 
     return pipe
 
@@ -146,7 +181,40 @@ def derive_tile_seed(
 def make_generator(config: EnhanceConfig, tile_seed: Optional[int]) -> Optional[torch.Generator]:
     if tile_seed is None:
         return None
-    return torch.Generator(device=config.device).manual_seed(tile_seed)
+    generator_device = "cpu" if config.offload_mode != "none" else config.device
+    return torch.Generator(device=generator_device).manual_seed(tile_seed)
+
+
+def pad_image_to_size(image: Image.Image, target_width: int, target_height: int) -> Image.Image:
+    width, height = image.size
+    if width == target_width and height == target_height:
+        return image
+
+    arr = np.asarray(image.convert("RGB"), dtype=np.uint8)
+    pad_width = target_width - width
+    pad_height = target_height - height
+    if pad_width < 0 or pad_height < 0:
+        raise ValueError("Target tile size must be >= image size.")
+
+    padded = np.pad(
+        arr,
+        ((0, pad_height), (0, pad_width), (0, 0)),
+        mode="edge",
+    )
+    return Image.fromarray(padded, mode="RGB")
+
+
+def pad_mask_to_size(mask: np.ndarray, target_width: int, target_height: int) -> np.ndarray:
+    height, width = mask.shape
+    if width == target_width and height == target_height:
+        return mask
+
+    pad_width = target_width - width
+    pad_height = target_height - height
+    if pad_width < 0 or pad_height < 0:
+        raise ValueError("Target mask size must be >= mask size.")
+
+    return np.pad(mask, ((0, pad_height), (0, pad_width)), mode="edge")
 
 
 def detect_skin_mask(image: Image.Image) -> np.ndarray:
@@ -197,22 +265,34 @@ def blend_skin_tiles(normal_tile: Image.Image, skin_tile: Image.Image, skin_mask
     return Image.fromarray(np.clip(blended, 0.0, 255.0).astype(np.uint8), mode="RGB")
 
 
+def apply_skin_tone_correction(
+    output_tile: Image.Image,
+    reference_tile: Image.Image,
+    skin_mask: np.ndarray,
+    radius: float = 16.0,
+) -> Image.Image:
+    reference_low = reference_tile.filter(ImageFilter.GaussianBlur(radius=radius))
+    output_low = output_tile.filter(ImageFilter.GaussianBlur(radius=radius))
+
+    output_arr = np.asarray(output_tile.convert("RGB"), dtype=np.float32)
+    reference_low_arr = np.asarray(reference_low.convert("RGB"), dtype=np.float32)
+    output_low_arr = np.asarray(output_low.convert("RGB"), dtype=np.float32)
+    mask = np.clip(skin_mask, 0.0, 1.0)[:, :, None]
+
+    corrected = output_arr + (reference_low_arr - output_low_arr) * mask
+    return Image.fromarray(np.clip(corrected, 0.0, 255.0).astype(np.uint8), mode="RGB")
+
+
 def match_color_to_reference(image: Image.Image, reference: Image.Image) -> Image.Image:
+    reference = reference.resize(image.size, Image.Resampling.LANCZOS)
+    reference_low = reference.filter(ImageFilter.GaussianBlur(radius=24))
+    image_low = image.filter(ImageFilter.GaussianBlur(radius=24))
+
     image_arr = np.asarray(image.convert("RGB"), dtype=np.float32)
-    reference_arr = np.asarray(reference.resize(image.size, Image.Resampling.LANCZOS).convert("RGB"), dtype=np.float32)
+    reference_low_arr = np.asarray(reference_low.convert("RGB"), dtype=np.float32)
+    image_low_arr = np.asarray(image_low.convert("RGB"), dtype=np.float32)
 
-    image_mean = image_arr.mean(axis=(0, 1))
-    image_std = image_arr.std(axis=(0, 1))
-    reference_mean = reference_arr.mean(axis=(0, 1))
-    reference_std = reference_arr.std(axis=(0, 1))
-
-    scale = np.divide(
-        reference_std,
-        image_std,
-        out=np.ones_like(reference_std),
-        where=image_std > 1e-6,
-    )
-    matched = (image_arr - image_mean) * scale + reference_mean
+    matched = image_arr + (reference_low_arr - image_low_arr)
     return Image.fromarray(np.clip(matched, 0.0, 255.0).astype(np.uint8), mode="RGB")
 
 
@@ -246,11 +326,16 @@ def enhance_image(
     init_image = Image.open(config.image_path).convert("RGB")
     width, height = init_image.size
 
-    target_width = round_up_to_multiple(width * config.upscale_factor, base=64)
-    target_height = round_up_to_multiple(height * config.upscale_factor, base=64)
-    resized_image = init_image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+    scaled_width = max(1, round(width * config.upscale_factor))
+    scaled_height = max(1, round(height * config.upscale_factor))
+    target_width = round_up_to_multiple(scaled_width, base=64)
+    target_height = round_up_to_multiple(scaled_height, base=64)
+    scaled_image = init_image.resize((scaled_width, scaled_height), Image.Resampling.LANCZOS)
+    resized_image = pad_image_to_size(scaled_image, target_width, target_height)
 
-    print(f"Enhancing image from {width}x{height} to {target_width}x{target_height} ...")
+    print(f"Enhancing image from {width}x{height} to {scaled_width}x{scaled_height} ...")
+    if (target_width, target_height) != (scaled_width, scaled_height):
+        print(f"[Info] Padded inference canvas to {target_width}x{target_height}.")
 
     tile_width = min(config.tile_size, target_width)
     tile_height = min(config.tile_size, target_height)
@@ -269,14 +354,41 @@ def enhance_image(
     if config.seed is not None:
         print(f"Using seed: {config.seed} (tile mode: {config.tile_seed_mode})")
     if config.skin_protect:
-        print(f"[Info] Skin protect enabled: skin_strength={config.skin_strength}")
+        print(
+            f"[Info] Skin protect enabled: mode={config.skin_protect_mode}, "
+            f"skin_strength={config.skin_strength}"
+        )
 
     accumulator = np.zeros((target_height, target_width, 3), dtype=np.float32)
     weights = np.zeros((target_height, target_width), dtype=np.float32)
     random_seed_source = random.Random(config.seed) if config.tile_seed_mode == "random" and config.seed is not None else None
+    full_skin_mask = detect_skin_mask(resized_image) if config.skin_protect else None
 
     vae_upgraded = False
     fallback_tiles: list[tuple[int, int, str]] = []
+    progress_line_length = 0
+
+    def clear_progress_line() -> None:
+        nonlocal progress_line_length
+        if progress_line_length == 0:
+            return
+        sys.stdout.write("\r" + (" " * progress_line_length) + "\r")
+        sys.stdout.flush()
+        progress_line_length = 0
+
+    def write_progress(message: str) -> None:
+        nonlocal progress_line_length
+        padding = max(progress_line_length - len(message), 0)
+        sys.stdout.write("\r" + message + (" " * padding))
+        sys.stdout.flush()
+        progress_line_length = len(message)
+
+    def finish_progress_line() -> None:
+        nonlocal progress_line_length
+        if progress_line_length > 0:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+            progress_line_length = 0
 
     def run_generation_once(tile_image: Image.Image, tile_seed: Optional[int], strength: float):
         generator = make_generator(config, tile_seed)
@@ -294,7 +406,7 @@ def enhance_image(
                 generator=generator,
             )
 
-    def generate_tile_with_fallback(
+    def generate_tile_checked(
         tile_image: Image.Image,
         tile_seed: Optional[int],
         x: int,
@@ -304,17 +416,18 @@ def enhance_image(
     ) -> Image.Image:
         nonlocal vae_upgraded
 
-        use_input_tile_fallback = False
-        fallback_reason = ""
         result = run_generation_once(tile_image, tile_seed, strength)
         output_tile = result.images[0]
         nsfw_flags = getattr(result, "nsfw_content_detected", None)
 
         if nsfw_flags and any(flag is True for flag in nsfw_flags):
-            use_input_tile_fallback = True
-            fallback_reason = f"{pass_name}:safety-checker"
+            clear_progress_line()
+            raise SafetyCheckerTriggeredError(
+                f"Safety checker triggered during {pass_name} pass at tile ({x}, {y})."
+            )
 
-        if not use_input_tile_fallback and is_near_black_image(output_tile):
+        if is_near_black_image(output_tile):
+            clear_progress_line()
             print(f"[Warning] Near-black {pass_name} tile detected at ({x}, {y}).")
             if config.dtype == torch.float16 and not vae_upgraded:
                 print("[Info] Retrying tile once with FP32 VAE decode...")
@@ -325,17 +438,16 @@ def enhance_image(
                     nsfw_flags = getattr(result, "nsfw_content_detected", None)
 
         if nsfw_flags and any(flag is True for flag in nsfw_flags):
-            use_input_tile_fallback = True
-            fallback_reason = f"{pass_name}:safety-checker-retry"
+            clear_progress_line()
+            raise SafetyCheckerTriggeredError(
+                f"Safety checker triggered during {pass_name} retry at tile ({x}, {y})."
+            )
 
-        if not use_input_tile_fallback and is_near_black_image(output_tile):
-            use_input_tile_fallback = True
-            fallback_reason = f"{pass_name}:near-black-retry"
-
-        if use_input_tile_fallback:
-            output_tile = tile_image.copy()
-            fallback_tiles.append((x, y, fallback_reason))
-            print(f"[Warning] Reusing original tile at ({x}, {y}) due to {fallback_reason}.")
+        if is_near_black_image(output_tile):
+            clear_progress_line()
+            raise RuntimeError(
+                f"Near-black {pass_name} tile remained after retry at tile ({x}, {y})."
+            )
 
         if output_tile.size != tile_image.size:
             output_tile = output_tile.resize(tile_image.size, Image.Resampling.LANCZOS)
@@ -348,13 +460,26 @@ def enhance_image(
         for x in x_starts:
             tile_counter += 1
             tile_seed = derive_tile_seed(config, tile_counter, random_seed_source)
-            box = (x, y, x + tile_width, y + tile_height)
-            tile_image = resized_image.crop(box)
-            skin_mask = detect_skin_mask(tile_image) if config.skin_protect else None
-            skin_coverage = skin_mask_coverage(skin_mask) if skin_mask is not None else 0.0
+            right = min(x + tile_width, target_width)
+            bottom = min(y + tile_height, target_height)
+            valid_width = right - x
+            valid_height = bottom - y
+            tile_image = resized_image.crop((x, y, right, bottom))
+            tile_image = pad_image_to_size(tile_image, tile_width, tile_height)
 
-            if skin_mask is not None and skin_coverage >= 0.98:
-                output_tile = generate_tile_with_fallback(
+            skin_mask = None
+            skin_coverage = 0.0
+            if full_skin_mask is not None:
+                skin_mask_valid = full_skin_mask[y:bottom, x:right]
+                skin_coverage = skin_mask_coverage(skin_mask_valid)
+                skin_mask = pad_mask_to_size(skin_mask_valid, tile_width, tile_height)
+
+            if (
+                skin_mask is not None
+                and config.skin_protect_mode == "dual-pass"
+                and skin_coverage >= 0.98
+            ):
+                output_tile = generate_tile_checked(
                     tile_image,
                     tile_seed,
                     x,
@@ -363,7 +488,7 @@ def enhance_image(
                     "skin",
                 )
             else:
-                output_tile = generate_tile_with_fallback(
+                output_tile = generate_tile_checked(
                     tile_image,
                     tile_seed,
                     x,
@@ -373,40 +498,50 @@ def enhance_image(
                 )
 
                 if skin_mask is not None and skin_coverage > 0.01:
-                    skin_tile = generate_tile_with_fallback(
-                        tile_image,
-                        tile_seed,
-                        x,
-                        y,
-                        config.skin_strength,
-                        "skin",
-                    )
-                    output_tile = blend_skin_tiles(output_tile, skin_tile, skin_mask)
+                    if config.skin_protect_mode == "tone":
+                        output_tile = apply_skin_tone_correction(output_tile, tile_image, skin_mask)
+                    else:
+                        skin_tile = generate_tile_checked(
+                            tile_image,
+                            tile_seed,
+                            x,
+                            y,
+                            config.skin_strength,
+                            "skin",
+                        )
+                        output_tile = blend_skin_tiles(output_tile, skin_tile, skin_mask)
 
-            output_tile_arr = np.asarray(output_tile.convert("RGB"), dtype=np.float32)
+            output_tile_arr = np.asarray(output_tile.convert("RGB"), dtype=np.float32)[:valid_height, :valid_width]
             blend_mask = build_blend_mask(
-                tile_width,
-                tile_height,
+                valid_width,
+                valid_height,
                 overlap_x,
                 overlap_y,
                 has_left=(x > 0),
-                has_right=(x + tile_width < target_width),
+                has_right=(right < target_width),
                 has_top=(y > 0),
-                has_bottom=(y + tile_height < target_height),
+                has_bottom=(bottom < target_height),
             )
 
-            accumulator[y : y + tile_height, x : x + tile_width, :] += output_tile_arr * blend_mask[:, :, None]
-            weights[y : y + tile_height, x : x + tile_width] += blend_mask
+            accumulator[y:bottom, x:right, :] += output_tile_arr * blend_mask[:, :, None]
+            weights[y:bottom, x:right] += blend_mask
 
-            print(f"[Tile {tile_counter}/{total_tiles}] Completed at ({x}, {y})")
+            progress_percent = tile_counter / total_tiles * 100.0
+            write_progress(
+                f"[Tile {tile_counter}/{total_tiles} | {progress_percent:5.1f}%] "
+                f"Completed at ({x}, {y})"
+            )
 
             if config.device == "cuda":
                 torch.cuda.empty_cache()
 
+    finish_progress_line()
+
     safe_weights = np.maximum(weights, 1e-6)
     output_array = np.clip(accumulator / safe_weights[:, :, None], 0.0, 255.0).astype(np.uint8)
     output_image = Image.fromarray(output_array, mode="RGB")
-    output_image = apply_postprocess(output_image, resized_image, config)
+    output_image = output_image.crop((0, 0, scaled_width, scaled_height))
+    output_image = apply_postprocess(output_image, scaled_image, config)
 
     if fallback_tiles:
         print(f"[Warning] Reused original content for {len(fallback_tiles)} tile(s).")
@@ -421,7 +556,7 @@ def enhance_image(
     sidecar_path = write_metadata_sidecar(
         config=config,
         input_size=(width, height),
-        output_size=(target_width, target_height),
+        output_size=(scaled_width, scaled_height),
         fallback_tiles=fallback_tiles,
     )
     print(f"Enhanced image saved to: {config.output_path}")

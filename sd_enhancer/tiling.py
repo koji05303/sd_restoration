@@ -1,6 +1,6 @@
-import math
+from __future__ import annotations
 
-import numpy as np
+import math
 
 
 def round_up_to_multiple(value: float, base: int = 64) -> int:
@@ -12,11 +12,13 @@ def compute_tile_starts(total_size: int, tile_size: int, overlap: int) -> list[i
     if total_size <= effective_tile:
         return [0]
 
-    stride = max(effective_tile - overlap, 1)
-    starts = list(range(0, total_size - effective_tile + 1, stride))
-    final_start = total_size - effective_tile
-    if starts[-1] != final_start:
-        starts.append(final_start)
+    stride = effective_tile - overlap
+    if stride <= 0:
+        raise ValueError("overlap must be smaller than tile_size")
+
+    starts = [0]
+    while starts[-1] + effective_tile < total_size:
+        starts.append(starts[-1] + stride)
     return starts
 
 
@@ -30,6 +32,8 @@ def build_blend_mask(
     has_top: bool,
     has_bottom: bool,
 ) -> np.ndarray:
+    import numpy as np
+
     mask_x = np.ones(tile_width, dtype=np.float32)
     mask_y = np.ones(tile_height, dtype=np.float32)
 
