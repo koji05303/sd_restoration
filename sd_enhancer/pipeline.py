@@ -431,7 +431,6 @@ def enhance_image(
             print(f"[Warning] Near-black {pass_name} tile detected at ({x}, {y}).")
             if config.dtype == torch.float16 and not vae_upgraded:
                 print("[Info] Retrying tile once with FP32 VAE decode...")
-                vae_upgraded = upgrade_vae_decode_precision(pipe)
                 if vae_upgraded:
                     result = run_generation_once(tile_image, tile_seed, strength)
                     output_tile = result.images[0]
@@ -446,7 +445,9 @@ def enhance_image(
         if is_near_black_image(output_tile):
             clear_progress_line()
             raise RuntimeError(
-                f"Near-black {pass_name} tile remained after retry at tile ({x}, {y})."
+                f"Near-black {pass_name} tile detected at tile ({x}, {y}). "
+                "Try --dtype fp32, --offload sequential, lower --guidance-scale, "
+                "or reduce --strength."
             )
 
         if output_tile.size != tile_image.size:
