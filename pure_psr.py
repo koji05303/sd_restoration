@@ -22,18 +22,7 @@ VALID_IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".we
 
 """
 TODO:
-- [x] 手刻 RRDBNet 架構
-- [x] 對齊 Real-ESRGAN_x4plus 的官方權重矩陣
-- [x] 實作分塊推理 (tile-based
-- [x] 增加邊界 padding 避免偽影 and 無縫拼接
-- [x] 支援 FP16 加速 (如果 GPU 支援的話)
-- [x] 增加 USM 銳化選項
-- [x] 測試大圖無 OOM, 且輸出品質與官方一致
 
-- [x] 物件封裝成 PureSREngine 類別，提供 enhance() 方法接受 OpenCV BGR 圖片並返回放大後的圖片。
-- [x] 建立 Gradio Based UI，允許用戶上傳圖片並選擇是否啟用細節增強，然後顯示放大後的結果。需要有 before/after 對比視窗。
-- [x] 網頁端須即時顯示 gpu 狀態，例如 vram 使用量，還有當前處理進度條和預估處理時間。
-- [x] 能作多好看就多好看，UI/UX 設計要簡潔直觀，盡量模仿專業圖像處理軟體的風格，讓人一看就懂怎麼用。
 """
 
 
