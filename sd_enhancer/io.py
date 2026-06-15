@@ -6,11 +6,13 @@ from .config import EnhanceConfig, VALID_IMAGE_EXTENSIONS
 
 
 def is_supported_image(path: Path) -> bool:
+    print (f"[DEBUG] Checking if {path} is a supported image...")
     return path.is_file() and path.suffix.lower() in VALID_IMAGE_EXTENSIONS
 
 
 def read_text_prompt(path: Path, prompt_name: str) -> str:
     text = path.read_text(encoding="utf-8").strip()
+    print (f"[DEBUG] Read {prompt_name} from {path}: {text[:30]}{'...' if len(text) > 30 else ''}")
     if not text:
         raise ValueError(f"{prompt_name} file is empty: {path}")
     return text
@@ -19,7 +21,9 @@ def read_text_prompt(path: Path, prompt_name: str) -> str:
 def collect_input_images(input_dir: Path, recursive: bool) -> list[Path]:
     iterator: Iterable[Path]
     iterator = input_dir.rglob("*") if recursive else input_dir.iterdir()
-    return sorted((path for path in iterator if is_supported_image(path)), key=lambda item: str(item).lower())
+    images = sorted((path for path in iterator if is_supported_image(path)), key=lambda item: str(item).lower())
+    print(f"[DEBUG] Collected {len(images)} images from {input_dir} (recursive={recursive})")
+    return images
 
 
 def ensure_available_output(output_path: Path, overwrite: bool) -> None:
@@ -56,9 +60,11 @@ def save_image(image: Any, output_path: Path) -> None:
     if output_path.suffix.lower() in {".jpg", ".jpeg"}:
         save_kwargs = {"quality": 95, "subsampling": 0}
     image.save(output_path, **save_kwargs)
+    print(f"[DEBUG] Saved image to {output_path} with kwargs: {save_kwargs}")
 
 
 def metadata_path_for(output_path: Path) -> Path:
+    print (f"[DEBUG] Generating metadata path for {output_path}")
     return output_path.with_suffix(".json")
 
 
@@ -108,4 +114,5 @@ def write_metadata_sidecar(
 
     sidecar_path = metadata_path_for(config.output_path)
     sidecar_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"[DEBUG] Wrote metadata to {sidecar_path}")
     return sidecar_path

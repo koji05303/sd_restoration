@@ -79,3 +79,12 @@ class EnhanceConfig:
     sharpen: bool
     contrast: bool
     match_color_input: bool
+
+def print_config(config: EnhanceConfig) -> None:
+    print("[DEBUG] EnhanceConfig:")
+    for field in config.__dataclass_fields__:
+        value = getattr(config, field)
+        if isinstance(value, Path):
+            print(f"  {field}: {value} (exists={value.exists()})")
+        else:
+            print(f"  {field}: {value}")
