@@ -7,3 +7,7 @@ output/
 __pycache__/
 .venv/
 .DS_Store
+
+.agents
+.codex
+.vscode
