@@ -1148,7 +1148,7 @@ def build_ui() -> gr.Blocks:
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Launch the Pure PSR Gradio app.")
     parser.add_argument("--host", default="0.0.0.0", help="Host for the Gradio server.")
-    parser.add_argument("--port", type=int, default=7861, help="Port for the Gradio server.")
+    parser.add_argument("--port", type=int, default=7860, help="Port for the Gradio server.")
     parser.add_argument("--share", action="store_true", help="Enable a public Gradio share link.")
     parser.add_argument("--inbrowser", action="store_true", help="Open the app in a browser.")
     return parser.parse_args()
