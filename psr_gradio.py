@@ -25,23 +25,23 @@ APP_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=JetBrains+Mono:wght@500;600&family=Manrope:wght@500;600;700;800;900&display=swap');
 
 :root {
-    --canvas: #f7f3ee;
-    --panel: #fffaf7;
-    --panel-raised: #ffffff;
-    --panel-soft: #f8efe7;
-    --ink: #2c2824;
-    --muted: #81756d;
-    --quiet: #a5968d;
-    --line: rgba(78, 55, 42, 0.12);
-    --line-strong: rgba(78, 55, 42, 0.2);
-    --accent: #bd7256;
-    --accent-strong: #9d563e;
-    --accent-soft: rgba(189, 114, 86, 0.13);
-    --sage: #4f8f82;
-    --gold: #b78a43;
-    --danger: #c85a50;
-    --shadow: 0 24px 70px rgba(93, 67, 53, 0.14);
-    --shadow-soft: 0 12px 34px rgba(93, 67, 53, 0.09);
+    --canvas: #0f1219;
+    --panel: #151a24;
+    --panel-raised: #1b2230;
+    --panel-soft: #202838;
+    --ink: #f3f6fb;
+    --muted: #aeb8c8;
+    --quiet: #7f8aa0;
+    --line: rgba(231, 238, 252, 0.11);
+    --line-strong: rgba(231, 238, 252, 0.2);
+    --accent: #e08a66;
+    --accent-strong: #f0a17b;
+    --accent-soft: rgba(224, 138, 102, 0.18);
+    --sage: #68c6b3;
+    --gold: #d6a85b;
+    --danger: #f27970;
+    --shadow: 0 24px 70px rgba(0, 0, 0, 0.34);
+    --shadow-soft: 0 12px 34px rgba(0, 0, 0, 0.24);
 }
 
 html,
@@ -51,27 +51,27 @@ body.dark,
 .dark,
 .gradio-container,
 .gradio-container.dark {
-    color-scheme: light !important;
-    --body-background-fill: #f7f3ee !important;
-    --body-text-color: #2c2824 !important;
-    --background-fill-primary: #fffaf7 !important;
-    --background-fill-secondary: #f8efe7 !important;
-    --block-background-fill: rgba(255, 255, 255, 0.76) !important;
-    --block-border-color: rgba(78, 55, 42, 0.12) !important;
-    --border-color-primary: rgba(78, 55, 42, 0.12) !important;
-    --border-color-accent: rgba(189, 114, 86, 0.28) !important;
-    --input-background-fill: #f8efe7 !important;
-    --input-border-color: rgba(78, 55, 42, 0.12) !important;
-    --button-secondary-background-fill: #f8efe7 !important;
-    --button-secondary-text-color: #2c2824 !important;
-    --link-text-color: #9d563e !important;
+    color-scheme: dark !important;
+    --body-background-fill: #0f1219 !important;
+    --body-text-color: #f3f6fb !important;
+    --background-fill-primary: #151a24 !important;
+    --background-fill-secondary: #101620 !important;
+    --block-background-fill: #151a24 !important;
+    --block-border-color: rgba(231, 238, 252, 0.11) !important;
+    --border-color-primary: rgba(231, 238, 252, 0.11) !important;
+    --border-color-accent: rgba(224, 138, 102, 0.38) !important;
+    --input-background-fill: #202838 !important;
+    --input-border-color: rgba(231, 238, 252, 0.13) !important;
+    --button-secondary-background-fill: #202838 !important;
+    --button-secondary-text-color: #f3f6fb !important;
+    --link-text-color: #f0a17b !important;
 }
 
 body,
 .gradio-container {
     background: var(--canvas) !important;
     color: var(--ink) !important;
-    color-scheme: light !important;
+    color-scheme: dark !important;
     font-family: Manrope, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
@@ -81,8 +81,8 @@ body,
     margin: 0 !important;
     padding: 20px !important;
     background:
-        radial-gradient(circle at 10% 0%, rgba(189, 114, 86, 0.14), rgba(189, 114, 86, 0) 28%),
-        linear-gradient(180deg, rgba(255, 251, 246, 0.9), rgba(247, 243, 238, 1) 44%),
+        radial-gradient(circle at 10% 0%, rgba(224, 138, 102, 0.16), rgba(224, 138, 102, 0) 28%),
+        linear-gradient(180deg, rgba(20, 25, 35, 0.96), rgba(15, 18, 25, 1) 48%),
         var(--canvas) !important;
 }
 
@@ -95,7 +95,7 @@ body,
     padding: 14px;
     border: 1px solid var(--line);
     border-radius: 8px;
-    background: rgba(255, 250, 245, 0.88);
+    background: rgba(18, 23, 32, 0.92);
     box-shadow: var(--shadow);
 }
 
@@ -108,7 +108,7 @@ body,
     padding: 12px;
     border: 1px solid var(--line);
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.78);
+    background: rgba(24, 30, 42, 0.9);
     box-shadow: var(--shadow-soft);
 }
 
@@ -125,9 +125,9 @@ body,
     height: 44px;
     place-items: center;
     flex: 0 0 auto;
-    border: 1px solid rgba(189, 114, 86, 0.24);
+    border: 1px solid rgba(224, 138, 102, 0.34);
     border-radius: 8px;
-    background: #fff2e9;
+    background: rgba(224, 138, 102, 0.14);
     color: var(--accent-strong);
     font-size: 0.74rem;
     font-weight: 900;
@@ -163,10 +163,10 @@ body,
 
 .mode-chip {
     padding: 8px 10px;
-    border: 1px solid rgba(93, 155, 141, 0.26);
+    border: 1px solid rgba(104, 198, 179, 0.28);
     border-radius: 8px;
-    background: rgba(93, 155, 141, 0.13);
-    color: #416f66;
+    background: rgba(104, 198, 179, 0.14);
+    color: #9ee8da;
     font-size: 0.74rem;
     font-weight: 900;
     letter-spacing: 0;
@@ -212,7 +212,7 @@ body,
     margin-top: 8px;
     overflow: hidden;
     border-radius: 999px;
-    background: rgba(80, 57, 48, 0.08);
+    background: rgba(231, 238, 252, 0.08);
 }
 
 .status-meter-fill {
@@ -236,7 +236,7 @@ body,
 .hero-note {
     border: 1px solid var(--line);
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.7);
+    background: rgba(24, 30, 42, 0.82);
     box-shadow: var(--shadow-soft);
 }
 
@@ -253,7 +253,7 @@ body,
     align-items: center;
     gap: 8px;
     padding: 7px 10px;
-    border: 1px solid rgba(189, 114, 86, 0.16);
+    border: 1px solid rgba(224, 138, 102, 0.24);
     border-radius: 8px;
     background: var(--accent-soft);
     color: var(--accent-strong);
@@ -268,8 +268,8 @@ body,
     width: 8px;
     height: 8px;
     border-radius: 999px;
-    background: linear-gradient(180deg, #d99972, #9d563e);
-    box-shadow: 0 0 0 5px rgba(189, 114, 86, 0.13);
+    background: linear-gradient(180deg, #f0a17b, #c66b4d);
+    box-shadow: 0 0 0 5px rgba(224, 138, 102, 0.16);
 }
 
 .hero-title {
@@ -301,7 +301,7 @@ body,
     padding: 13px 14px;
     border: 1px solid var(--line);
     border-radius: 8px;
-    background: rgba(255, 250, 246, 0.84);
+    background: rgba(20, 26, 36, 0.84);
 }
 
 .metric-label {
@@ -348,7 +348,7 @@ body,
 .status-panel {
     border: 1px solid var(--line);
     border-radius: 8px;
-    background: rgba(255, 255, 255, 0.76);
+    background: rgba(24, 30, 42, 0.88);
     box-shadow: var(--shadow-soft);
 }
 
@@ -419,9 +419,9 @@ body,
     border: 0 !important;
     border-radius: 8px !important;
     background: linear-gradient(135deg, var(--accent-strong), var(--accent)) !important;
-    color: #fffaf4 !important;
+    color: #151a24 !important;
     font-weight: 900 !important;
-    box-shadow: 0 14px 30px rgba(157, 86, 62, 0.22) !important;
+    box-shadow: 0 14px 30px rgba(224, 138, 102, 0.22) !important;
 }
 
 #run-button:hover {
@@ -439,7 +439,7 @@ body,
 
 .gradio-container .image-container,
 .gradio-container .empty {
-    background: #fffdf9 !important;
+    background: #111722 !important;
     border-radius: 8px !important;
     border-color: var(--line) !important;
 }
@@ -538,24 +538,24 @@ body,
 }
 """
 
-LIGHT_MODE_HEAD = """
+DARK_MODE_HEAD = """
 <script>
 (() => {
-    const forceLight = () => {
-        document.documentElement.classList.remove("dark");
-        document.documentElement.classList.add("light");
-        document.body?.classList.remove("dark");
-        document.body?.classList.add("light");
+    const useNativeDark = () => {
+        document.documentElement.classList.remove("light");
+        document.documentElement.classList.add("dark");
+        document.body?.classList.remove("light");
+        document.body?.classList.add("dark");
         try {
-            localStorage.setItem("theme", "light");
-            localStorage.setItem("__theme", "light");
-            localStorage.setItem("gradio.theme", "light");
+            localStorage.setItem("theme", "dark");
+            localStorage.setItem("__theme", "dark");
+            localStorage.setItem("gradio.theme", "dark");
         } catch (_) {}
     };
 
-    forceLight();
-    document.addEventListener("DOMContentLoaded", forceLight);
-    new MutationObserver(forceLight).observe(document.documentElement, {
+    useNativeDark();
+    document.addEventListener("DOMContentLoaded", useNativeDark);
+    new MutationObserver(useNativeDark).observe(document.documentElement, {
         attributes: true,
         attributeFilter: ["class"],
     });
@@ -1010,7 +1010,7 @@ def build_ui() -> gr.Blocks:
         "theme": theme,
     }
     if "head" in inspect.signature(gr.Blocks).parameters:
-        blocks_kwargs["head"] = LIGHT_MODE_HEAD
+        blocks_kwargs["head"] = DARK_MODE_HEAD
 
     with gr.Blocks(**blocks_kwargs) as demo:
         with gr.Column(elem_classes="app-shell"):
