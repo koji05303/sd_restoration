@@ -4,6 +4,7 @@ import argparse
 import gc
 import html
 import inspect
+import os
 import threading
 import tempfile
 import time
@@ -858,7 +859,6 @@ def run_psr(
             cleanup_device = "cpu"
         release_device_memory(cleanup_device)
 
-
 def run_batch_psr(
     files,
     enhance_detail: bool,
@@ -941,6 +941,8 @@ def run_batch_psr(
                         "input_size": input_size,
                         "output_size": output_size,
                         "elapsed": time.monotonic() - image_start,
+                        "file_size": os.path.getsize(output_path),
+                        "file_format": selected_format,
                     }
                 )
             except Exception as exc:
