@@ -1,14 +1,24 @@
+from __future__ import annotations
+
+import argparse
+import gc
 import os
+import time
+import urllib.request
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Callable, Iterable, Optional
+
 import cv2
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import numpy as np
-import urllib.request
-import gc
 
 
 DEFAULT_CUDA_DEVICE = "cuda:0"  
+DEFAULT_OUTPUT_DIR = Path("output")
+VALID_IMAGE_EXTENSIONS = {".bmp", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"}
 
 """
 TODO:
@@ -25,6 +35,241 @@ TODO:
 - [x] 網頁端須即時顯示 gpu 狀態，例如 vram 使用量，還有當前處理進度條和預估處理時間。
 - [x] 能作多好看就多好看，UI/UX 設計要簡潔直觀，盡量模仿專業圖像處理軟體的風格，讓人一看就懂怎麼用。
 """
+
+
+@dataclass
+class BatchResult:
+    input_path: Path
+    output_path: Optional[Path]
+    success: bool
+    error: str = ""
+    elapsed_seconds: float = 0.0
+    input_size: Optional[tuple[int, int]] = None
+    output_size: Optional[tuple[int, int]] = None
+
+
+BatchProgressCallback = Callable[[int, int, Path, Optional[Path], int, int], None]
+
+
+def is_supported_image(path: Path) -> bool:
+    return path.is_file() and path.suffix.lower() in VALID_IMAGE_EXTENSIONS
+
+
+def collect_input_images(
+    image_paths: Iterable[Path] = (),
+    input_dir: Optional[Path] = None,
+    recursive: bool = False,
+) -> list[Path]:
+    images: list[Path] = []
+
+    for image_path in image_paths:
+        if not is_supported_image(image_path):
+            raise ValueError(f"Unsupported or missing image file: {image_path}")
+        images.append(image_path)
+
+    if input_dir is not None:
+        if not input_dir.is_dir():
+            raise ValueError(f"Input directory does not exist: {input_dir}")
+        iterator = input_dir.rglob("*") if recursive else input_dir.iterdir()
+        images.extend(path for path in iterator if is_supported_image(path))
+
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for image_path in sorted(images, key=lambda item: str(item).lower()):
+        resolved = image_path.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        deduped.append(image_path)
+
+    return deduped
+
+
+def release_device_memory(device: torch.device | str = DEFAULT_CUDA_DEVICE) -> None:
+    gc.collect()
+    try:
+        torch_device = torch.device(device)
+    except (TypeError, RuntimeError):
+        torch_device = torch.device("cpu")
+
+    if torch_device.type == "cuda" and torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def is_cuda_oom_error(exc: BaseException) -> bool:
+    if not isinstance(exc, RuntimeError):
+        return False
+    message = str(exc).lower()
+    return "out of memory" in message and "cuda" in message
+
+
+def reduced_tile_size(tile_size: int, min_tile_size: int = 64) -> Optional[int]:
+    if tile_size <= min_tile_size:
+        return None
+    next_tile_size = max(min_tile_size, (tile_size // 2) // 8 * 8)
+    if next_tile_size >= tile_size:
+        return None
+    return next_tile_size
+
+
+def read_bgr_image(image_path: Path) -> np.ndarray:
+    buffer = np.fromfile(str(image_path), dtype=np.uint8)
+    image = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+    if image is None:
+        raise ValueError(f"Could not read image: {image_path}")
+    return image
+
+
+def write_bgr_image(image_path: Path, image_bgr: np.ndarray) -> None:
+    image_path.parent.mkdir(parents=True, exist_ok=True)
+    suffix = image_path.suffix.lower()
+    params: list[int] = []
+    if suffix in {".jpg", ".jpeg"}:
+        params = [cv2.IMWRITE_JPEG_QUALITY, 96]
+    elif suffix == ".png":
+        params = [cv2.IMWRITE_PNG_COMPRESSION, 3]
+
+    ok, encoded = cv2.imencode(suffix, image_bgr, params)
+    if not ok:
+        raise ValueError(f"Could not encode output image as {suffix}: {image_path}")
+    encoded.tofile(str(image_path))
+
+
+def output_suffix_for(input_path: Path, output_format: str) -> str:
+    normalized_format = (output_format or "png").strip().lower()
+    if normalized_format == "jpg":
+        return ".jpg"
+    if normalized_format == "keep":
+        suffix = input_path.suffix.lower()
+        return suffix if suffix in VALID_IMAGE_EXTENSIONS else ".png"
+    return ".png"
+
+
+def resolve_batch_output_path(
+    input_path: Path,
+    output_dir: Path,
+    output_format: str = "png",
+    input_root: Optional[Path] = None,
+    overwrite: bool = False,
+) -> Path:
+    relative_parent = Path()
+    if input_root is not None:
+        try:
+            relative_parent = input_path.resolve().parent.relative_to(input_root.resolve())
+        except ValueError:
+            relative_parent = Path()
+
+    output_path = (
+        output_dir
+        / relative_parent
+        / f"{input_path.stem}_pure_psr{output_suffix_for(input_path, output_format)}"
+    )
+    if output_path.exists() and not overwrite:
+        raise FileExistsError(f"Output already exists: {output_path}. Use --overwrite to replace it.")
+    return output_path
+
+
+def enhance_path(
+    engine: "PureSREngine",
+    input_path: Path,
+    output_path: Path,
+    enhance_detail: bool = True,
+    progress_callback: Optional[Callable[[int, int], None]] = None,
+    retry_on_oom: bool = True,
+    min_tile_size: int = 64,
+) -> tuple[tuple[int, int], tuple[int, int]]:
+    while True:
+        input_bgr: Optional[np.ndarray] = None
+        output_bgr: Optional[np.ndarray] = None
+        try:
+            input_bgr = read_bgr_image(input_path)
+            height, width = input_bgr.shape[:2]
+            output_bgr = engine.enhance(
+                input_bgr,
+                enhance_detail=enhance_detail,
+                progress_callback=progress_callback,
+            )
+            out_height, out_width = output_bgr.shape[:2]
+            write_bgr_image(output_path, output_bgr)
+            return (width, height), (out_width, out_height)
+        except RuntimeError as exc:
+            next_tile_size = reduced_tile_size(int(engine.tile_size), min_tile_size)
+            if not retry_on_oom or not is_cuda_oom_error(exc) or next_tile_size is None:
+                raise
+            print(
+                f"[Warning] CUDA OOM at tile_size={engine.tile_size}. "
+                f"Retrying {input_path} with tile_size={next_tile_size}."
+            )
+            engine.tile_size = next_tile_size
+            continue
+        finally:
+            del input_bgr, output_bgr
+            release_device_memory(engine.device)
+
+
+def run_batch(
+    engine: "PureSREngine",
+    image_paths: Iterable[Path],
+    output_dir: Path,
+    output_format: str = "png",
+    enhance_detail: bool = True,
+    overwrite: bool = False,
+    input_root: Optional[Path] = None,
+    progress_callback: Optional[BatchProgressCallback] = None,
+) -> list[BatchResult]:
+    paths = list(image_paths)
+    results: list[BatchResult] = []
+    total_images = len(paths)
+
+    for image_index, input_path in enumerate(paths, start=1):
+        output_path: Optional[Path] = None
+        start_time = time.monotonic()
+        try:
+            output_path = resolve_batch_output_path(
+                input_path=input_path,
+                output_dir=output_dir,
+                output_format=output_format,
+                input_root=input_root,
+                overwrite=overwrite,
+            )
+            if progress_callback:
+                progress_callback(image_index, total_images, input_path, output_path, 0, 0)
+
+            def update_tile_progress(done: int, total: int) -> None:
+                if progress_callback:
+                    progress_callback(image_index, total_images, input_path, output_path, done, total)
+
+            input_size, output_size = enhance_path(
+                engine=engine,
+                input_path=input_path,
+                output_path=output_path,
+                enhance_detail=enhance_detail,
+                progress_callback=update_tile_progress,
+            )
+            results.append(
+                BatchResult(
+                    input_path=input_path,
+                    output_path=output_path,
+                    success=True,
+                    elapsed_seconds=time.monotonic() - start_time,
+                    input_size=input_size,
+                    output_size=output_size,
+                )
+            )
+        except Exception as exc:
+            release_device_memory(engine.device)
+            results.append(
+                BatchResult(
+                    input_path=input_path,
+                    output_path=output_path,
+                    success=False,
+                    error=str(exc),
+                    elapsed_seconds=time.monotonic() - start_time,
+                )
+            )
+
+    return results
+
 
 # ==========================================
 # 手刻神經網路架構 (RRDBNet)
@@ -222,21 +467,128 @@ class PureSREngine:
         
         return output_bgr
 
-if __name__ == '__main__':
-    
-    engine = PureSREngine(device=DEFAULT_CUDA_DEVICE)
-    
-    input_img = cv2.imread("input/fake.jpg")
-    if input_img is not None:
-        print("Starting Pure SR Matrix upscaling...")
-        import time
-        t0 = time.time()
-        
-        result = engine.enhance(input_img)
-        
-        # result = cv2.resize(result, (result.shape[1]//2, result.shape[0]//2), interpolation=cv2.INTER_LANCZOS4)
-        
-        cv2.imwrite("output/fake_pure_sr.jpg", result)
-        print(f"Perfectly generated! Time taken: {time.time() - t0:.3f} seconds")
-    else:
-        print("Damn, couldn't read the image! Check your path!")
+def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Run Pure PSR on one image or a sequential batch.")
+    parser.add_argument("inputs", nargs="*", type=Path, help="Input image file(s).")
+    parser.add_argument("--input-dir", type=Path, help="Directory of images for batch mode.")
+    parser.add_argument("--recursive", action="store_true", help="Scan --input-dir recursively.")
+    parser.add_argument("--output", type=Path, help="Output file for single-image mode.")
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
+        help="Output directory for batch mode.",
+    )
+    parser.add_argument(
+        "--format",
+        choices=["png", "jpg", "keep"],
+        default="png",
+        help="Output format for --output-dir mode.",
+    )
+    parser.add_argument("--device", default=DEFAULT_CUDA_DEVICE, help="Torch device, e.g. cuda:0 or cpu.")
+    parser.add_argument("--tile-size", type=int, default=256, help="Tile size. Lower values reduce VRAM usage.")
+    parser.add_argument("--tile-pad", type=int, default=16, help="Tile padding used to reduce edge artifacts.")
+    parser.add_argument("--no-detail", action="store_true", help="Disable the final unsharp-mask detail pass.")
+    parser.add_argument("--overwrite", action="store_true", help="Overwrite existing outputs.")
+    return parser.parse_args(argv)
+
+
+def main(argv: Optional[list[str]] = None) -> int:
+    args = parse_args(argv)
+    legacy_default = not args.inputs and args.input_dir is None
+    if legacy_default:
+        args.inputs = [Path("input/fake.jpg")]
+        if args.output is None:
+            args.output = Path("output/fake_pure_sr.jpg")
+
+    if args.tile_size < 64 or args.tile_size % 8 != 0:
+        print("Error: --tile-size must be at least 64 and divisible by 8.")
+        return 2
+    if args.tile_pad < 0 or args.tile_pad >= args.tile_size:
+        print("Error: --tile-pad must be smaller than --tile-size.")
+        return 2
+
+    try:
+        images = collect_input_images(args.inputs, args.input_dir, args.recursive)
+    except ValueError as exc:
+        print(f"Error: {exc}")
+        return 2
+
+    if not images:
+        print("Error: no supported input images found.")
+        return 2
+    if args.output is not None and len(images) != 1:
+        print("Error: --output can only be used with exactly one input image.")
+        return 2
+    if args.output is not None and args.output.exists() and not args.overwrite:
+        print(f"Error: output already exists: {args.output}. Use --overwrite to replace it.")
+        return 2
+
+    print("Starting Pure SR Matrix upscaling...")
+    engine = PureSREngine(device=args.device)
+    engine.tile_size = int(args.tile_size)
+    engine.tile_pad = int(args.tile_pad)
+
+    try:
+        if args.output is not None:
+            start_time = time.monotonic()
+            input_size, output_size = enhance_path(
+                engine=engine,
+                input_path=images[0],
+                output_path=args.output,
+                enhance_detail=not args.no_detail,
+            )
+            elapsed = time.monotonic() - start_time
+            print(
+                f"Generated {args.output} | "
+                f"{input_size[0]}x{input_size[1]} -> {output_size[0]}x{output_size[1]} | "
+                f"{elapsed:.3f}s"
+            )
+            return 0
+
+        input_root = args.input_dir if args.input_dir is not None else None
+
+        def print_progress(
+            image_index: int,
+            total_images: int,
+            input_path: Path,
+            output_path: Optional[Path],
+            tile_done: int,
+            tile_total: int,
+        ) -> None:
+            if tile_total <= 0:
+                print(f"[Batch {image_index}/{total_images}] {input_path} -> {output_path}")
+                return
+            if tile_done == tile_total or tile_done == 1 or tile_done % 8 == 0:
+                print(
+                    f"[Batch {image_index}/{total_images}] "
+                    f"tile {tile_done}/{tile_total}"
+                )
+
+        results = run_batch(
+            engine=engine,
+            image_paths=images,
+            output_dir=args.output_dir,
+            output_format=args.format,
+            enhance_detail=not args.no_detail,
+            overwrite=args.overwrite,
+            input_root=input_root,
+            progress_callback=print_progress,
+        )
+    finally:
+        release_device_memory(engine.device)
+
+    succeeded = [result for result in results if result.success]
+    failed = [result for result in results if not result.success]
+
+    print(f"Batch complete: {len(succeeded)} succeeded, {len(failed)} failed.")
+    for result in succeeded:
+        print(f"  OK  {result.input_path} -> {result.output_path} ({result.elapsed_seconds:.3f}s)")
+    for result in failed:
+        print(f"  ERR {result.input_path}: {result.error}")
+
+    return 1 if failed else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

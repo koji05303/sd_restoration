@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import argparse
+import gc
 import html
 import inspect
 import threading
 import tempfile
 import time
+import zipfile
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Optional
 
 import cv2
@@ -15,7 +18,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from pure_psr import DEFAULT_CUDA_DEVICE, PureSREngine
+from pure_psr import DEFAULT_CUDA_DEVICE, PureSREngine, enhance_path, read_bgr_image, release_device_memory
 
 
 APP_CSS = """
@@ -426,6 +429,7 @@ body,
 }
 
 .gradio-container button.secondary,
+#batch-button,
 #refresh-button {
     border-radius: 8px !important;
     background: var(--panel-soft) !important;
@@ -566,6 +570,12 @@ class EngineSlot:
     engine: PureSREngine
 
 
+@dataclass
+class UploadedBatchFile:
+    path: Path
+    display_name: str
+
+
 _ENGINE_SLOT: Optional[EngineSlot] = None
 _ENGINE_LOCK = threading.Lock()
 
@@ -678,6 +688,94 @@ def save_download_image(image: Image.Image, output_format: str) -> str:
     return output_path
 
 
+def normalize_uploaded_files(files) -> list[UploadedBatchFile]:
+    if files is None:
+        return []
+
+    items = files if isinstance(files, (list, tuple)) else [files]
+    uploads: list[UploadedBatchFile] = []
+    for item in items:
+        path_value = None
+        display_name = None
+
+        if isinstance(item, (str, Path)):
+            path_value = item
+            display_name = Path(item).name
+        elif isinstance(item, dict):
+            path_value = item.get("path") or item.get("name")
+            display_name = item.get("orig_name") or item.get("name") or item.get("path")
+        else:
+            path_value = getattr(item, "path", None) or getattr(item, "name", None)
+            display_name = (
+                getattr(item, "orig_name", None)
+                or getattr(item, "name", None)
+                or getattr(item, "path", None)
+            )
+
+        if path_value is None:
+            continue
+
+        path = Path(path_value)
+        if not path.is_file():
+            continue
+
+        uploads.append(
+            UploadedBatchFile(
+                path=path,
+                display_name=Path(str(display_name or path.name)).name,
+            )
+        )
+
+    return uploads
+
+
+def safe_output_stem(display_name: str, fallback: str) -> str:
+    stem = Path(display_name).stem or fallback
+    cleaned = "".join(ch if ch.isalnum() or ch in {"-", "_"} else "_" for ch in stem)
+    return cleaned.strip("_") or fallback
+
+
+def batch_output_path(
+    output_dir: Path,
+    upload: UploadedBatchFile,
+    output_format: str,
+    image_index: int,
+) -> Path:
+    suffix = ".jpg" if output_format == "JPG" else ".png"
+    stem = safe_output_stem(upload.display_name, f"image_{image_index:03d}")
+    output_path = output_dir / f"{image_index:03d}_{stem}_pure_psr{suffix}"
+    suffix_index = 2
+    while output_path.exists():
+        output_path = output_dir / f"{image_index:03d}_{stem}_pure_psr_{suffix_index}{suffix}"
+        suffix_index += 1
+    return output_path
+
+
+def make_batch_file_input() -> gr.File:
+    kwargs = {"label": "Batch photos"}
+    file_params = inspect.signature(gr.File).parameters
+    if "file_count" in file_params:
+        kwargs["file_count"] = "multiple"
+    if "type" in file_params:
+        kwargs["type"] = "filepath"
+    if "file_types" in file_params:
+        kwargs["file_types"] = ["image"]
+    return gr.File(**kwargs)
+
+
+def load_preview_image(image_path: Path) -> Image.Image:
+    with Image.open(image_path) as image:
+        return image.convert("RGB").copy()
+
+
+def make_batch_zip(output_dir: Path, output_paths: list[Path]) -> str:
+    zip_path = output_dir / "pure_psr_batch_results.zip"
+    with zipfile.ZipFile(zip_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for output_path in output_paths:
+            archive.write(output_path, arcname=output_path.name)
+    return str(zip_path)
+
+
 def run_psr(
     image: Optional[Image.Image],
     enhance_detail: bool,
@@ -744,7 +842,7 @@ def run_psr(
             f"Input: {width} x {height}\n"
             f"Output: {output_size}\n"
             f"Download format: {selected_format}\n"
-            f"Tile size: {tile_size}\n"
+            f"Tile size: {engine.tile_size}\n"
             f"Tile padding: {tile_pad}\n"
             f"Device: {resolve_device(device)}\n"
             f"Detail enhancement: {'on' if enhance_detail else 'off'}"
@@ -753,6 +851,145 @@ def run_psr(
         return output_image, source, output_image.copy(), download_path, log, gpu_status_html()
     except Exception as exc:
         return None, source, None, None, f"Error: {exc}", gpu_status_html()
+    finally:
+        try:
+            cleanup_device = resolve_device(device)
+        except RuntimeError:
+            cleanup_device = "cpu"
+        release_device_memory(cleanup_device)
+
+
+def run_batch_psr(
+    files,
+    enhance_detail: bool,
+    output_format: str,
+    tile_size: int,
+    tile_pad: int,
+    device: str,
+    progress=gr.Progress(track_tqdm=False),
+):
+    uploads = normalize_uploaded_files(files)
+    if not uploads:
+        return None, None, None, None, "Error: Please choose one or more images.", gpu_status_html()
+
+    if tile_size < 64 or tile_size % 8 != 0:
+        return None, None, None, None, "Error: tile size must be at least 64 and divisible by 8.", gpu_status_html()
+
+    if tile_pad < 0 or tile_pad >= tile_size:
+        return None, None, None, None, "Error: tile padding must be smaller than tile size.", gpu_status_html()
+
+    selected_format = (output_format or "PNG").strip().upper()
+    if selected_format not in {"PNG", "JPG"}:
+        selected_format = "PNG"
+
+    output_dir = Path(tempfile.mkdtemp(prefix="pure_psr_batch_"))
+    start_time = time.monotonic()
+    last_update = 0.0
+    succeeded: list[dict[str, object]] = []
+    failed: list[tuple[str, str]] = []
+    last_source: Optional[Image.Image] = None
+    last_output: Optional[Image.Image] = None
+    total_images = len(uploads)
+
+    try:
+        progress(0.02, desc="Loading model")
+        engine = get_engine(device)
+        engine.tile_size = int(tile_size)
+        engine.tile_pad = int(tile_pad)
+        resolved_device = resolve_device(device)
+
+        for image_index, upload in enumerate(uploads, start=1):
+            image_start = time.monotonic()
+            output_path = batch_output_path(output_dir, upload, selected_format, image_index)
+            progress(
+                0.06 + ((image_index - 1) / total_images) * 0.88,
+                desc=f"Image {image_index}/{total_images}",
+            )
+
+            def update_tile_progress(done: int, total: int) -> None:
+                nonlocal last_update
+                now = time.monotonic()
+                if done < total and now - last_update < 0.35:
+                    return
+                last_update = now
+                tile_ratio = done / max(total, 1)
+                overall_ratio = ((image_index - 1) + tile_ratio) / max(total_images, 1)
+                elapsed = now - start_time
+                eta = elapsed * (1.0 - overall_ratio) / max(overall_ratio, 1e-6)
+                progress(
+                    0.06 + overall_ratio * 0.88,
+                    desc=(
+                        f"Image {image_index}/{total_images} | "
+                        f"Tile {done}/{total} | ETA {format_seconds(eta)}"
+                    ),
+                )
+
+            try:
+                input_size, output_size = enhance_path(
+                    engine=engine,
+                    input_path=upload.path,
+                    output_path=output_path,
+                    enhance_detail=bool(enhance_detail),
+                    progress_callback=update_tile_progress,
+                )
+                last_source = load_preview_image(upload.path)
+                last_output = bgr_to_image(read_bgr_image(output_path))
+                succeeded.append(
+                    {
+                        "name": upload.display_name,
+                        "path": output_path,
+                        "input_size": input_size,
+                        "output_size": output_size,
+                        "elapsed": time.monotonic() - image_start,
+                    }
+                )
+            except Exception as exc:
+                failed.append((upload.display_name, str(exc)))
+            finally:
+                gc.collect()
+                release_device_memory(resolved_device)
+
+        progress(0.96, desc="Packing download")
+        output_paths = [entry["path"] for entry in succeeded if isinstance(entry["path"], Path)]
+        download_path = make_batch_zip(output_dir, output_paths) if output_paths else None
+        elapsed = format_seconds(time.monotonic() - start_time)
+        log_lines = [
+            f"Batch done in {elapsed}",
+            f"Images: {len(succeeded)} succeeded / {len(failed)} failed",
+            f"Download format: {selected_format}",
+            f"Tile size: {engine.tile_size}",
+            f"Tile padding: {tile_pad}",
+            f"Device: {resolved_device}",
+            f"Detail enhancement: {'on' if enhance_detail else 'off'}",
+        ]
+        if succeeded:
+            log_lines.append("")
+            log_lines.append("Outputs:")
+            for entry in succeeded:
+                input_size = entry["input_size"]
+                output_size = entry["output_size"]
+                log_lines.append(
+                    f"OK {entry['name']} -> {Path(entry['path']).name} | "
+                    f"{input_size[0]} x {input_size[1]} -> {output_size[0]} x {output_size[1]} | "
+                    f"{format_seconds(float(entry['elapsed']))}"
+                )
+        if failed:
+            log_lines.append("")
+            log_lines.append("Errors:")
+            for name, error in failed:
+                log_lines.append(f"ERR {name}: {error}")
+
+        progress(1.0, desc="Done")
+        after_preview = last_output.copy() if last_output is not None else None
+        return last_output, last_source, after_preview, download_path, "\n".join(log_lines), gpu_status_html()
+    except Exception as exc:
+        return None, None, None, None, f"Error: {exc}", gpu_status_html()
+    finally:
+        try:
+            cleanup_device = resolve_device(device)
+        except RuntimeError:
+            cleanup_device = "cpu"
+        release_device_memory(cleanup_device)
 
 
 def build_ui() -> gr.Blocks:
@@ -801,7 +1038,7 @@ def build_ui() -> gr.Blocks:
                         <h2 class="hero-title">Lumi Restore Studio</h2>
                         <p class="hero-copy">
                             A bright restoration desk for Real-ESRGAN x4 upscaling,
-                            tile-safe rendering, soft detail polish, and clean before-after review.
+                            tile-safe rendering, batch output, and clean before-after review.
                         </p>
                         <div class="metric-grid">
                             <div class="metric-card">
@@ -814,7 +1051,7 @@ def build_ui() -> gr.Blocks:
                             </div>
                             <div class="metric-card">
                                 <div class="metric-label">Output</div>
-                                <div class="metric-value">PNG / JPG</div>
+                                <div class="metric-value">PNG / JPG / ZIP</div>
                             </div>
                         </div>
                     </section>
@@ -825,12 +1062,12 @@ def build_ui() -> gr.Blocks:
                     <aside class="hero-note">
                         <h3 class="note-title">Restoration Notes</h3>
                         <p class="note-copy">
-                            Upload an image, choose the output format, and run the restore pass.
+                            Upload one image or choose a batch, set the output format, and run the restore pass.
                             GPU usage stays visible while tiled inference keeps larger images manageable.
                         </p>
                         <ul class="note-list">
                             <li>Detail polish uses a light unsharp mask after upscaling.</li>
-                            <li>Tile controls are available for memory-sensitive renders.</li>
+                            <li>Batch renders are processed one image at a time.</li>
                             <li>Before and after panes keep the review path direct.</li>
                         </ul>
                     </aside>
@@ -839,8 +1076,9 @@ def build_ui() -> gr.Blocks:
 
             with gr.Row(elem_classes="workbench"):
                 with gr.Column(elem_classes="control-panel", scale=0, min_width=300):
-                    gr.Markdown("### Your Photo", elem_classes="panel-heading")
+                    gr.Markdown("### Your Photos", elem_classes="panel-heading")
                     input_image = make_preview_image("Upload", 300)
+                    batch_files = make_batch_file_input()
                     enhance_detail = gr.Checkbox(label="Soft detail polish", value=True)
                     output_format = gr.Radio(
                         label="Save as",
@@ -868,7 +1106,8 @@ def build_ui() -> gr.Blocks:
                             value=default_device,
                             allow_custom_value=True,
                         )
-                    run_button = gr.Button("Restore photo", variant="primary", elem_id="run-button")
+                    run_button = gr.Button("Restore single", variant="primary", elem_id="run-button")
+                    batch_button = gr.Button("Restore batch", variant="secondary", elem_id="batch-button")
                     refresh_button = gr.Button("Refresh status", variant="secondary", elem_id="refresh-button")
 
                 with gr.Column(elem_classes="viewer-panel"):
@@ -887,6 +1126,12 @@ def build_ui() -> gr.Blocks:
                 inputs=[input_image, enhance_detail, output_format, tile_size, tile_pad, device],
                 outputs=[output_image, before_image, after_image, download_file, logs, gpu_status],
                 api_name="upscale",
+            )
+            batch_button.click(
+                fn=run_batch_psr,
+                inputs=[batch_files, enhance_detail, output_format, tile_size, tile_pad, device],
+                outputs=[output_image, before_image, after_image, download_file, logs, gpu_status],
+                api_name="batch_upscale",
             )
             refresh_button.click(fn=gpu_status_html, outputs=gpu_status, api_name="gpu_status")
             demo.load(fn=gpu_status_html, outputs=gpu_status)
