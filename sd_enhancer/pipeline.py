@@ -162,28 +162,38 @@ def install_fp32_vae_decode_guard(pipe: StableDiffusionControlNetImg2ImgPipeline
 
     original_decode = vae.decode
 
+    def vae_dtype() -> torch.dtype:
+        try:
+            return next(vae.parameters()).dtype
+        except StopIteration:
+            return torch.float32
+
     def decode_fp32(sample, *args, **kwargs):
         if isinstance(sample, torch.Tensor) and sample.is_cuda:
+            original_dtype = vae_dtype()
             with torch.autocast("cuda", enabled=False):
-                return original_decode(sample.to(dtype=torch.float32), *args, **kwargs)
+                if original_dtype != torch.float32:
+                    vae.to(dtype=torch.float32)
+                try:
+                    return original_decode(sample.to(dtype=torch.float32), *args, **kwargs)
+                finally:
+                    if original_dtype != torch.float32:
+                        vae.to(dtype=original_dtype)
         return original_decode(sample, *args, **kwargs)
 
     vae.decode = decode_fp32
     vae._sd_enhancer_original_decode = original_decode
     vae._sd_enhancer_fp32_decode_guard = True
-    logger.info("Installed FP32 VAE decode guard.")
+    logger.info("Installed temporary FP32 VAE decode guard.")
     return True
 
 
 def upgrade_vae_decode_precision(pipe: StableDiffusionControlNetImg2ImgPipeline) -> bool:
     try:
-        if hasattr(pipe, "upcast_vae"):
-            pipe.upcast_vae()
-        else:
-            pipe.vae.to(dtype=torch.float32)
-        install_fp32_vae_decode_guard(pipe)
-        logger.info("Upgraded VAE decode precision to FP32.")
-        return True
+        installed = install_fp32_vae_decode_guard(pipe)
+        if installed:
+            logger.info("Configured VAE decode to run in temporary FP32.")
+        return installed
     except Exception as exc:
         logger.warning("Failed to upgrade VAE decode precision: %s", exc)
         return False

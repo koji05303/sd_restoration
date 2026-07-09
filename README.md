@@ -168,7 +168,7 @@ flowchart TD
 - skin-heavy tile 會動態降低 `strength`、`guidance_scale` 與 `conditioning_scale`，避免模型在低解析度皮膚區過度重繪。
 - `skin-texture-guard` 會做 hierarchical blending：非皮膚區保留 SD detail path，皮膚區回到 Lanczos upscaled natural path，只混入少量低頻 tone delta。
 - 若偵測到皮膚且設定了 `skin_tile_size`，pipeline 會使用較大的 skin-aware tile size，減少臉部與皮膚區域的拼接點。
-- CUDA FP16 pipeline 會主動 upcast VAE decode 到 FP32，降低大片相似膚色區的條紋與 near-black 風險。
+- CUDA FP16 pipeline 會在 VAE decode 當下臨時切到 FP32，decode 完還原 VAE dtype，降低大片相似膚色區的條紋與 near-black 風險，同時避免 img2img encode 階段 dtype mismatch。
 - tile output 會使用 cosine overlap mask 加權累積，再用 total weights normalize。
 - near-black tile 會視為錯誤；若是 FP16 VAE decode 問題，會嘗試一次 FP32 VAE decode retry。
 
