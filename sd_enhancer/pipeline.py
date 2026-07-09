@@ -1,3 +1,4 @@
+import logging
 import random
 import sys
 from pathlib import Path
@@ -11,6 +12,9 @@ from PIL import Image, ImageEnhance, ImageFilter, ImageStat
 from .config import EnhanceConfig
 from .io import save_image, write_metadata_sidecar
 from .tiling import build_blend_mask, compute_tile_starts, round_up_to_multiple
+
+
+logger = logging.getLogger(__name__)
 
 
 class SafetyCheckerTriggeredError(RuntimeError):
@@ -35,7 +39,7 @@ def resolve_dtype(dtype_choice, device: str):
         return torch.float16 if device == "cuda" else torch.float32
 
     if dtype_choice == "fp16" and device == "cpu":
-        print("[Warning] fp16 on CPU is not supported by many ops. Falling back to fp32.")
+        logger.warning("fp16 on CPU is not supported by many ops. Falling back to fp32.")
         return torch.float32
 
     return torch.float16 if dtype_choice == "fp16" else torch.float32
@@ -45,27 +49,27 @@ def enable_low_vram_optimizations(pipe: StableDiffusionControlNetImg2ImgPipeline
     try:
         if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_tiling"):
             pipe.vae.enable_tiling()
-            print("Enabled VAE tiling.")
+            logger.info("Enabled VAE tiling.")
         elif hasattr(pipe, "enable_vae_tiled_decode"):
             pipe.enable_vae_tiled_decode()
-            print("Enabled VAE tiled decode.")
+            logger.info("Enabled VAE tiled decode.")
         elif hasattr(pipe, "enable_vae_tiling"):
             pipe.enable_vae_tiling()
-            print("Enabled VAE tiling (compat mode).")
+            logger.info("Enabled VAE tiling (compat mode).")
         else:
-            print("[Warning] This diffusers version does not expose VAE tiled decode/tiling APIs.")
+            logger.warning("This diffusers version does not expose VAE tiled decode/tiling APIs.")
     except Exception as exc:
-        print(f"[Warning] Failed to enable VAE tiled decode/tiling: {exc}")
+        logger.warning("Failed to enable VAE tiled decode/tiling: %s", exc)
 
     try:
         if hasattr(pipe, "vae") and hasattr(pipe.vae, "enable_slicing"):
             pipe.vae.enable_slicing()
-            print("Enabled VAE slicing.")
+            logger.info("Enabled VAE slicing.")
         else:
             pipe.enable_vae_slicing()
-            print("Enabled VAE slicing (compat mode).")
+            logger.info("Enabled VAE slicing (compat mode).")
     except Exception as exc:
-        print(f"[Warning] Failed to enable VAE slicing: {exc}")
+        logger.warning("Failed to enable VAE slicing: %s", exc)
 
 
 def enable_attention_backend(
@@ -75,16 +79,16 @@ def enable_attention_backend(
     if config.device == "cuda" and config.use_xformers:
         try:
             pipe.enable_xformers_memory_efficient_attention()
-            print("Enabled xFormers memory efficient attention.")
+            logger.info("Enabled xFormers memory efficient attention.")
             return
         except Exception as exc:
-            print(f"[Warning] Failed to enable xFormers: {exc}")
+            logger.warning("Failed to enable xFormers: %s", exc)
 
     try:
         pipe.enable_attention_slicing()
-        print("Enabled attention slicing.")
+        logger.info("Enabled attention slicing.")
     except Exception as exc:
-        print(f"[Warning] Failed to enable attention slicing: {exc}")
+        logger.warning("Failed to enable attention slicing: %s", exc)
 
 
 def place_pipeline(
@@ -92,21 +96,21 @@ def place_pipeline(
     config: EnhanceConfig,
 ) -> StableDiffusionControlNetImg2ImgPipeline:
     if config.device != "cuda" and config.offload_mode != "none":
-        print("[Warning] CPU offload requires CUDA. Falling back to --offload none.")
+        logger.warning("CPU offload requires CUDA. Falling back to --offload none.")
         config.offload_mode = "none"
 
     if config.offload_mode == "sequential":
         if not hasattr(pipe, "enable_sequential_cpu_offload"):
             raise RuntimeError("This diffusers version does not support sequential CPU offload.")
         pipe.enable_sequential_cpu_offload()
-        print("Enabled sequential CPU offload.")
+        logger.info("Enabled sequential CPU offload.")
         return pipe
 
     if config.offload_mode == "model":
         if not hasattr(pipe, "enable_model_cpu_offload"):
             raise RuntimeError("This diffusers version does not support model CPU offload.")
         pipe.enable_model_cpu_offload()
-        print("Enabled model CPU offload.")
+        logger.info("Enabled model CPU offload.")
         return pipe
 
     return pipe.to(config.device)
@@ -116,11 +120,11 @@ def create_pipeline(config: EnhanceConfig) -> StableDiffusionControlNetImg2ImgPi
     config.device = resolve_device(config.device)
     config.dtype = resolve_dtype(config.dtype, config.device)
 
-    print("Initializing model...")
+    logger.info("Initializing model...")
     if config.device == "cuda":
-        print(f"CUDA Device: {torch.cuda.get_device_name(0)}")
+        logger.info("CUDA device: %s", torch.cuda.get_device_name(0))
     else:
-        print("Device: CPU")
+        logger.info("Device: CPU")
 
     controlnet = ControlNetModel.from_pretrained(config.controlnet_id, torch_dtype=config.dtype)
 
@@ -151,10 +155,10 @@ def upgrade_vae_decode_precision(pipe: StableDiffusionControlNetImg2ImgPipeline)
             pipe.upcast_vae()
         else:
             pipe.vae.to(dtype=torch.float32)
-        print("[Info] Upgraded VAE decode precision to FP32.")
+        logger.info("Upgraded VAE decode precision to FP32.")
         return True
     except Exception as exc:
-        print(f"[Warning] Failed to upgrade VAE decode precision: {exc}")
+        logger.warning("Failed to upgrade VAE decode precision: %s", exc)
         return False
 
 
@@ -339,15 +343,15 @@ def apply_postprocess(
     config: EnhanceConfig,
 ) -> Image.Image:
     if config.match_color_input:
-        print("[Postprocess] Matching output color to input.")
+        logger.info("Postprocess: matching output color to input.")
         output_image = match_color_to_reference(output_image, reference_image)
 
     if config.contrast:
-        print("[Postprocess] Applying contrast.")
+        logger.info("Postprocess: applying contrast.")
         output_image = ImageEnhance.Contrast(output_image).enhance(1.06)
 
     if config.sharpen:
-        print("[Postprocess] Applying sharpen.")
+        logger.info("Postprocess: applying sharpen.")
         output_image = output_image.filter(ImageFilter.UnsharpMask(radius=1.2, percent=120, threshold=3))
 
     return output_image
@@ -370,9 +374,9 @@ def enhance_image(
     scaled_image = init_image.resize((scaled_width, scaled_height), Image.Resampling.LANCZOS)
     resized_image = pad_image_to_size(scaled_image, target_width, target_height)
 
-    print(f"Enhancing image from {width}x{height} to {scaled_width}x{scaled_height} ...")
+    logger.info("Enhancing image from %dx%d to %dx%d ...", width, height, scaled_width, scaled_height)
     if (target_width, target_height) != (scaled_width, scaled_height):
-        print(f"[Info] Padded inference canvas to {target_width}x{target_height}.")
+        logger.info("Padded inference canvas to %dx%d.", target_width, target_height)
 
     tile_width = min(config.tile_size, target_width)
     tile_height = min(config.tile_size, target_height)
@@ -383,19 +387,24 @@ def enhance_image(
     y_starts = compute_tile_starts(target_height, tile_height, overlap_y)
     total_tiles = len(x_starts) * len(y_starts)
 
-    print(
-        f"[Info] Tiled inference: tile={tile_width}x{tile_height}, "
-        f"overlap={overlap_x}x{overlap_y}, total_tiles={total_tiles}"
+    logger.info(
+        "Tiled inference: tile=%dx%d, overlap=%dx%d, total_tiles=%d",
+        tile_width,
+        tile_height,
+        overlap_x,
+        overlap_y,
+        total_tiles,
     )
 
     if config.seed is not None:
-        print(f"Using seed: {config.seed} (tile mode: {config.tile_seed_mode})")
+        logger.info("Using seed: %s (tile mode: %s)", config.seed, config.tile_seed_mode)
     if config.skin_protect:
-        print(
-            f"[Info] Skin protect enabled: mode={config.skin_protect_mode}, "
-            f"skin_strength={config.skin_strength}, "
-            f"texture_guard={config.skin_texture_guard}, "
-            f"texture_guard_strength={config.skin_texture_guard_strength}"
+        logger.info(
+            "Skin protect enabled: mode=%s, skin_strength=%s, texture_guard=%s, texture_guard_strength=%s",
+            config.skin_protect_mode,
+            config.skin_strength,
+            config.skin_texture_guard,
+            config.skin_texture_guard_strength,
         )
 
     accumulator = np.zeros((target_height, target_width, 3), dtype=np.float32)
@@ -467,9 +476,9 @@ def enhance_image(
 
         if is_near_black_image(output_tile):
             clear_progress_line()
-            print(f"[Warning] Near-black {pass_name} tile detected at ({x}, {y}).")
+            logger.warning("Near-black %s tile detected at (%d, %d).", pass_name, x, y)
             if config.dtype == torch.float16 and not vae_upgraded:
-                print("[Info] Retrying tile once with FP32 VAE decode...")
+                logger.info("Retrying tile once with FP32 VAE decode...")
                 vae_upgraded = upgrade_vae_decode_precision(pipe)
                 if vae_upgraded:
                     result = run_generation_once(tile_image, tile_seed, strength)
@@ -593,7 +602,7 @@ def enhance_image(
     output_image = apply_postprocess(output_image, scaled_image, config)
 
     if fallback_tiles:
-        print(f"[Warning] Reused original content for {len(fallback_tiles)} tile(s).")
+        logger.warning("Reused original content for %d tile(s).", len(fallback_tiles))
 
     if is_near_black_image(output_image):
         raise RuntimeError(
@@ -601,13 +610,13 @@ def enhance_image(
             "Try --dtype fp32, lower --guidance-scale, or different model weights."
         )
 
-    save_image(output_image, config.output_path)
+    config.output_path = save_image(output_image, config.output_path)
     sidecar_path = write_metadata_sidecar(
         config=config,
         input_size=(width, height),
         output_size=(scaled_width, scaled_height),
         fallback_tiles=fallback_tiles,
     )
-    print(f"Enhanced image saved to: {config.output_path}")
-    print(f"Metadata saved to: {sidecar_path}")
+    logger.info("Enhanced image saved to: %s", config.output_path)
+    logger.info("Metadata saved to: %s", sidecar_path)
     return config.output_path

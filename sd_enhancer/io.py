@@ -1,18 +1,27 @@
 import json
+import logging
 from pathlib import Path
 from typing import Any, Iterable
 
 from .config import EnhanceConfig, VALID_IMAGE_EXTENSIONS
 
 
+logger = logging.getLogger(__name__)
+OUTPUT_SUFFIX = ".png"
+
+
+def png_output_path(path: Path) -> Path:
+    return path.with_suffix(OUTPUT_SUFFIX)
+
+
 def is_supported_image(path: Path) -> bool:
-    print (f"[DEBUG] Checking if {path} is a supported image...")
+    logger.debug("Checking if %s is a supported image", path)
     return path.is_file() and path.suffix.lower() in VALID_IMAGE_EXTENSIONS
 
 
 def read_text_prompt(path: Path, prompt_name: str) -> str:
     text = path.read_text(encoding="utf-8").strip()
-    print (f"[DEBUG] Read {prompt_name} from {path}: {text[:30]}{'...' if len(text) > 30 else ''}")
+    logger.debug("Read %s from %s: %s%s", prompt_name, path, text[:30], "..." if len(text) > 30 else "")
     if not text:
         raise ValueError(f"{prompt_name} file is empty: {path}")
     return text
@@ -22,7 +31,7 @@ def collect_input_images(input_dir: Path, recursive: bool) -> list[Path]:
     iterator: Iterable[Path]
     iterator = input_dir.rglob("*") if recursive else input_dir.iterdir()
     images = sorted((path for path in iterator if is_supported_image(path)), key=lambda item: str(item).lower())
-    print(f"[DEBUG] Collected {len(images)} images from {input_dir} (recursive={recursive})")
+    logger.debug("Collected %d images from %s (recursive=%s)", len(images), input_dir, recursive)
     return images
 
 
@@ -33,13 +42,13 @@ def ensure_available_output(output_path: Path, overwrite: bool) -> None:
 
 def resolve_single_output_path(output_arg: Path, input_image: Path, overwrite: bool) -> Path:
     if output_arg.exists() and output_arg.is_dir():
-        output_path = output_arg / f"{input_image.stem}_enhanced{input_image.suffix}"
+        output_path = output_arg / f"{input_image.stem}_enhanced{OUTPUT_SUFFIX}"
     elif output_arg.suffix == "":
         output_arg.mkdir(parents=True, exist_ok=True)
-        output_path = output_arg / f"{input_image.stem}_enhanced{input_image.suffix}"
+        output_path = output_arg / f"{input_image.stem}_enhanced{OUTPUT_SUFFIX}"
     else:
         output_arg.parent.mkdir(parents=True, exist_ok=True)
-        output_path = output_arg
+        output_path = png_output_path(output_arg)
 
     ensure_available_output(output_path, overwrite)
     return output_path
@@ -49,22 +58,21 @@ def resolve_batch_output_path(output_dir: Path, input_root: Path, input_image: P
     relative_path = input_image.relative_to(input_root)
     output_subdir = output_dir / relative_path.parent
     output_subdir.mkdir(parents=True, exist_ok=True)
-    output_path = output_subdir / f"{relative_path.stem}_enhanced{relative_path.suffix}"
+    output_path = output_subdir / f"{relative_path.stem}_enhanced{OUTPUT_SUFFIX}"
     ensure_available_output(output_path, overwrite)
     return output_path
 
 
-def save_image(image: Any, output_path: Path) -> None:
+def save_image(image: Any, output_path: Path) -> Path:
+    output_path = png_output_path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    save_kwargs = {}
-    if output_path.suffix.lower() in {".jpg", ".jpeg"}:
-        save_kwargs = {"quality": 95, "subsampling": 0}
-    image.save(output_path, **save_kwargs)
-    print(f"[DEBUG] Saved image to {output_path} with kwargs: {save_kwargs}")
+    image.save(output_path, format="PNG", optimize=True)
+    logger.debug("Saved PNG image to %s", output_path)
+    return output_path
 
 
 def metadata_path_for(output_path: Path) -> Path:
-    print (f"[DEBUG] Generating metadata path for {output_path}")
+    logger.debug("Generating metadata path for %s", output_path)
     return output_path.with_suffix(".json")
 
 
@@ -116,5 +124,5 @@ def write_metadata_sidecar(
 
     sidecar_path = metadata_path_for(config.output_path)
     sidecar_path.write_text(json.dumps(metadata, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"[DEBUG] Wrote metadata to {sidecar_path}")
+    logger.debug("Wrote metadata to %s", sidecar_path)
     return sidecar_path

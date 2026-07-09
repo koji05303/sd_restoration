@@ -4,10 +4,11 @@ output/
 *.pt
 *.npy
 *.pth
-__pycache__/
 .venv/
 .DS_Store
 
 .agents
 .codex
 .vscode
+
+__pycache__/

@@ -268,6 +268,15 @@ flowchart TD
 | `--disable-xformers` | flag | `False` | 不嘗試啟用 xFormers attention。 |
 | `--offload` | `none`, `model`, `sequential` | preset value | CPU offload mode；`sequential` 最省 VRAM，但最慢。 |
 
+### Logging
+
+| 參數 | 型別 / choices | 預設 | 定義 |
+| --- | --- | --- | --- |
+| `-v`, `--verbose` | count flag | `0` | 啟用 DEBUG logging。 |
+| `--quiet` | flag | `False` | 只顯示 warning/error；若同時設定 `--log-level`，以 `--log-level` 為準。 |
+| `--log-level` | `DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL` | `INFO` | 明確指定 logging level。 |
+| `--log-file` | path | none | 將同一份 logs 額外寫入檔案。 |
+
 ## EnhanceConfig 欄位定義
 
 `EnhanceConfig` 是 CLI 與 Gradio app 共用的內部 API。
@@ -326,8 +335,9 @@ flowchart TD
 
 ### SD Enhancer
 
-- 單張模式若 `--output` 是檔案，會直接寫到該檔案；若 `--output` 是資料夾，會寫出 `<stem>_enhanced<suffix>`。
-- batch 模式會在輸出資料夾下寫出 `<stem>_enhanced<suffix>`，並保留相對子資料夾結構。
+- SD enhancer 一律輸出 PNG。若 `--output` 指定的是非 PNG 檔名，副檔名會被正規化為 `.png`。
+- 單張模式若 `--output` 是資料夾，會寫出 `<stem>_enhanced.png`。
+- batch 模式會在輸出資料夾下寫出 `<stem>_enhanced.png`，並保留相對子資料夾結構。
 - 每張輸出旁邊會寫一個 metadata sidecar：`<output_stem>.json`。
 
 metadata sidecar 會記錄：
@@ -385,4 +395,3 @@ python -B -c "import gradio_app; demo = gradio_app.build_ui(); print('gradio bui
 ```bash
 conda run -n yolo python -B enhancer.py --help
 ```
-

@@ -1,5 +1,5 @@
 import argparse
-import sys
+import logging
 from pathlib import Path
 from typing import Optional
 
@@ -19,11 +19,48 @@ from .io import (
 from .presets import PRESETS, get_preset
 
 
+logger = logging.getLogger(__name__)
+LOG_LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL")
+
+
 class HelpFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawTextHelpFormatter):
     def _get_help_string(self, action):
         if action.default is None:
             return action.help
         return super()._get_help_string(action)
+
+
+def configure_logging(
+    log_level: Optional[str],
+    verbose: int,
+    quiet: bool,
+    log_file: Optional[Path],
+) -> None:
+    if log_level is not None:
+        level = getattr(logging, log_level)
+    elif quiet:
+        level = logging.WARNING
+    elif verbose:
+        level = logging.DEBUG
+    else:
+        level = logging.INFO
+
+    handlers: list[logging.Handler] = [logging.StreamHandler()]
+    if log_file is not None:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        handlers.append(logging.FileHandler(log_file, encoding="utf-8"))
+
+    logging.basicConfig(
+        level=level,
+        format="%(levelname)s:%(name)s:%(message)s",
+        handlers=handlers,
+        force=True,
+    )
+
+
+def value_or_preset(args: argparse.Namespace, preset, name: str, arg_name: Optional[str] = None):
+    value = getattr(args, arg_name or name)
+    return value if value is not None else getattr(preset, name)
 
 
 def positive_float(value: str) -> float:
@@ -275,6 +312,32 @@ def create_parser() -> argparse.ArgumentParser:
         help="Overwrite output file if it already exists.",
     )
 
+    logging_group = parser.add_argument_group("Logging options")
+    logging_group.add_argument(
+        "-v",
+        "--verbose",
+        action="count",
+        default=0,
+        help="Enable debug logging. Can be repeated; currently any value enables DEBUG.",
+    )
+    logging_group.add_argument(
+        "--quiet",
+        action="store_true",
+        help="Only show warnings and errors unless --log-level is set.",
+    )
+    logging_group.add_argument(
+        "--log-level",
+        choices=LOG_LEVELS,
+        default=None,
+        help="Explicit logging level.",
+    )
+    logging_group.add_argument(
+        "--log-file",
+        type=Path,
+        default=None,
+        help="Optional file path that receives the same logs as stderr.",
+    )
+
     parser.epilog = (
         "Examples:\n"
         "  python enhancer.py -i input/example.jpg -o output/ --preset photo --seed 42\n"
@@ -305,61 +368,38 @@ def build_config(args: argparse.Namespace, image_path: Path, output_path: Path) 
         output_path=output_path,
         prompt=prompt,
         negative_prompt=negative_prompt,
-        model_id=args.model_id or preset.model_id,
-        controlnet_id=args.controlnet_id or preset.controlnet_id,
-        upscale_factor=args.upscale_factor if args.upscale_factor is not None else preset.upscale_factor,
-        strength=args.strength if args.strength is not None else preset.strength,
-        conditioning_scale=(
-            args.conditioning_scale
-            if args.conditioning_scale is not None
-            else preset.conditioning_scale
-        ),
-        guidance_scale=args.guidance_scale if args.guidance_scale is not None else preset.guidance_scale,
-        steps=args.steps if args.steps is not None else preset.steps,
+        model_id=value_or_preset(args, preset, "model_id"),
+        controlnet_id=value_or_preset(args, preset, "controlnet_id"),
+        upscale_factor=value_or_preset(args, preset, "upscale_factor"),
+        strength=value_or_preset(args, preset, "strength"),
+        conditioning_scale=value_or_preset(args, preset, "conditioning_scale"),
+        guidance_scale=value_or_preset(args, preset, "guidance_scale"),
+        steps=value_or_preset(args, preset, "steps"),
         seed=args.seed,
         device=args.device,
         dtype=args.dtype,
         use_xformers=not args.disable_xformers,
         overwrite=args.overwrite,
-        tile_size=args.tile_size if args.tile_size is not None else preset.tile_size,
-        tile_overlap=args.tile_overlap if args.tile_overlap is not None else preset.tile_overlap,
-        tile_seed_mode=(
-            args.tile_seed_mode
-            if args.tile_seed_mode is not None
-            else preset.tile_seed_mode
-        ),
+        tile_size=value_or_preset(args, preset, "tile_size"),
+        tile_overlap=value_or_preset(args, preset, "tile_overlap"),
+        tile_seed_mode=value_or_preset(args, preset, "tile_seed_mode"),
         preset=args.preset,
-        skin_protect=(
-            args.skin_protect
-            if args.skin_protect is not None
-            else preset.skin_protect
-        ),
-        skin_protect_mode=(
-            args.skin_protect_mode
-            if args.skin_protect_mode is not None
-            else preset.skin_protect_mode
-        ),
-        skin_strength=args.skin_strength if args.skin_strength is not None else preset.skin_strength,
-        offload_mode=args.offload if args.offload is not None else preset.offload_mode,
+        skin_protect=value_or_preset(args, preset, "skin_protect"),
+        skin_protect_mode=value_or_preset(args, preset, "skin_protect_mode"),
+        skin_strength=value_or_preset(args, preset, "skin_strength"),
+        offload_mode=value_or_preset(args, preset, "offload_mode", "offload"),
         sharpen=args.sharpen,
         contrast=args.contrast,
         match_color_input=args.match_color_input,
-        skin_texture_guard=(
-            args.skin_texture_guard
-            if args.skin_texture_guard is not None
-            else preset.skin_texture_guard
-        ),
-        skin_texture_guard_strength=(
-            args.skin_texture_guard_strength
-            if args.skin_texture_guard_strength is not None
-            else preset.skin_texture_guard_strength
-        ),
+        skin_texture_guard=value_or_preset(args, preset, "skin_texture_guard"),
+        skin_texture_guard_strength=value_or_preset(args, preset, "skin_texture_guard_strength"),
     )
 
 
 def parse_args(argv: Optional[list[str]] = None) -> list[EnhanceConfig]:
     parser = create_parser()
     args = parser.parse_args(argv)
+    configure_logging(args.log_level, args.verbose, args.quiet, args.log_file)
 
     if args.recursive and args.input_dir is None:
         parser.error("--recursive requires --input-dir.")
@@ -416,12 +456,12 @@ def main(argv: Optional[list[str]] = None) -> int:
 
         for index, config in enumerate(configs, start=1):
             if len(configs) > 1:
-                print(f"[Batch {index}/{len(configs)}] {config.image_path} -> {config.output_path}")
+                logger.info("Batch %d/%d: %s -> %s", index, len(configs), config.image_path, config.output_path)
             enhance_image(config, pipe=pipe)
         return 0
     except KeyboardInterrupt:
-        print("Interrupted by user.")
+        logger.warning("Interrupted by user.")
         return 130
     except Exception as exc:
-        print(f"Error: {exc}", file=sys.stderr)
+        logger.error("Error: %s", exc, exc_info=logger.isEnabledFor(logging.DEBUG))
         return 1

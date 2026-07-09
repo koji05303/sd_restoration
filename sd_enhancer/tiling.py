@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 
 def round_up_to_multiple(value: float, base: int = 64) -> int:
     return max(base, int(math.ceil(value / base) * base))
@@ -32,8 +34,6 @@ def build_blend_mask(
     has_top: bool,
     has_bottom: bool,
 ) -> np.ndarray:
-    import numpy as np
-
     mask_x = np.ones(tile_width, dtype=np.float32)
     mask_y = np.ones(tile_height, dtype=np.float32)
 

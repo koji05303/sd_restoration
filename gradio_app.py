@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import io
+import logging
 import shutil
 import tempfile
 from pathlib import Path
@@ -804,6 +805,14 @@ def run_enhance(
     input_path = work_dir / "input.png"
     output_path = work_dir / "output.png"
     logs = io.StringIO()
+    log_handler = logging.StreamHandler(logs)
+    log_handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+    enhancer_logger = logging.getLogger("sd_enhancer")
+    previous_log_level = enhancer_logger.level
+    previous_propagate = enhancer_logger.propagate
+    enhancer_logger.addHandler(log_handler)
+    enhancer_logger.setLevel(logging.INFO)
+    enhancer_logger.propagate = False
 
     try:
         progress(0.05, desc="Preparing input image")
@@ -873,6 +882,10 @@ def run_enhance(
             return None, source_image, None, f"Error: {exc}\n\nLogs:\n{output_logs}"
         return None, source_image, None, f"Error: {exc}"
     finally:
+        enhancer_logger.removeHandler(log_handler)
+        enhancer_logger.setLevel(previous_log_level)
+        enhancer_logger.propagate = previous_propagate
+        log_handler.close()
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
