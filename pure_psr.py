@@ -95,10 +95,6 @@ def reduced_tile_size(tile_size: int, min_tile_size: int = 64) -> Optional[int]:
         return None
     return next_tile_size
 
-def tile_size_config_check():
-    if tile_overlap >= max(min_tile_size):
-        print(f"tile_size_config_check")
-    pass
 
 def read_bgr_image(image_path: Path) -> np.ndarray:
     buffer = np.fromfile(str(image_path), dtype=np.uint8)
