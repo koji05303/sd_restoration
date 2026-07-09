@@ -1,19 +1,22 @@
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_MODEL_ID = "SG161222/Realistic_Vision_V5.1_noVAE"
 DEFAULT_CONTROLNET_ID = "lllyasviel/control_v11f1e_sd15_tile"
 
 
 DEFAULT_PROMPT = (
-    "(best quality, high fidelity:1.15), "
-    "faithful photographic enhancement, "
+    "(best quality, faithful restoration:1.1), "
+    "restrained photographic enhancement, "
     "preserved identity and anatomy, "
-    "natural skin tone, "
-    "smooth skin color transition, "
-    "subtle realistic detail, "
+    "natural tone transitions, "
+    "preserved natural skin texture, "
+    "subtle original detail, "
     "preserved lighting, "
     "clean edges"
 )
@@ -34,14 +37,11 @@ DEFAULT_NEGATIVE_PROMPT = (
     "watermark, "
     "bad hands, "
     "missing fingers, "
-    "mottled skin, "
-    "patchy skin tone, "
-    "uneven skin texture, "
-    "excessive pores, "
+    "synthetic texture, "
     "repeating texture, "
     "tile pattern, "
-    "overprocessed skin, "
-    "plastic skin"
+    "oversharpening artifacts, "
+    "overprocessed"
 )
 
 VALID_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
@@ -80,14 +80,17 @@ class EnhanceConfig:
     contrast: bool
     match_color_input: bool
     skin_texture_guard: bool = True
-    skin_texture_guard_strength: float = 0.65
+    skin_texture_guard_strength: float = 0.72
+    skin_guidance_scale: float = 4.0
+    skin_conditioning_scale: float = 0.7
+    skin_tile_size: Optional[int] = None
 
 
 def print_config(config: EnhanceConfig) -> None:
-    print("[DEBUG] EnhanceConfig:")
+    logger.debug("EnhanceConfig:")
     for field in config.__dataclass_fields__:
         value = getattr(config, field)
         if isinstance(value, Path):
-            print(f"  {field}: {value} (exists={value.exists()})")
+            logger.debug("  %s: %s (exists=%s)", field, value, value.exists())
         else:
-            print(f"  {field}: {value}")
+            logger.debug("  %s: %s", field, value)

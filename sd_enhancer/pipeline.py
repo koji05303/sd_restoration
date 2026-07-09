@@ -136,6 +136,8 @@ def create_pipeline(config: EnhanceConfig) -> StableDiffusionControlNetImg2ImgPi
     )
 
     pipe.scheduler = DDIMScheduler.from_config(pipe.scheduler.config)
+    if config.device == "cuda" and config.dtype == torch.float16:
+        upgrade_vae_decode_precision(pipe)
     enable_low_vram_optimizations(pipe)
     enable_attention_backend(pipe, config)
     pipe = place_pipeline(pipe, config)
@@ -149,12 +151,37 @@ def is_near_black_image(image: Image.Image, mean_threshold: float = 2.0) -> bool
     return max(channel_means) <= mean_threshold
 
 
+def install_fp32_vae_decode_guard(pipe: StableDiffusionControlNetImg2ImgPipeline) -> bool:
+    vae = getattr(pipe, "vae", None)
+    if vae is None:
+        logger.warning("Pipeline has no VAE; cannot install FP32 decode guard.")
+        return False
+
+    if getattr(vae, "_sd_enhancer_fp32_decode_guard", False):
+        return True
+
+    original_decode = vae.decode
+
+    def decode_fp32(sample, *args, **kwargs):
+        if isinstance(sample, torch.Tensor) and sample.is_cuda:
+            with torch.autocast("cuda", enabled=False):
+                return original_decode(sample.to(dtype=torch.float32), *args, **kwargs)
+        return original_decode(sample, *args, **kwargs)
+
+    vae.decode = decode_fp32
+    vae._sd_enhancer_original_decode = original_decode
+    vae._sd_enhancer_fp32_decode_guard = True
+    logger.info("Installed FP32 VAE decode guard.")
+    return True
+
+
 def upgrade_vae_decode_precision(pipe: StableDiffusionControlNetImg2ImgPipeline) -> bool:
     try:
         if hasattr(pipe, "upcast_vae"):
             pipe.upcast_vae()
         else:
             pipe.vae.to(dtype=torch.float32)
+        install_fp32_vae_decode_guard(pipe)
         logger.info("Upgraded VAE decode precision to FP32.")
         return True
     except Exception as exc:
@@ -187,6 +214,18 @@ def make_generator(config: EnhanceConfig, tile_seed: Optional[int]) -> Optional[
         return None
     generator_device = "cpu" if config.offload_mode != "none" else config.device
     return torch.Generator(device=generator_device).manual_seed(tile_seed)
+
+
+def skin_parameter_mix(skin_coverage: float, start: float = 0.01, full: float = 0.75) -> float:
+    if skin_coverage <= start:
+        return 0.0
+    return float(np.clip((skin_coverage - start) / max(full - start, 1e-6), 0.0, 1.0))
+
+
+def blend_parameter_for_skin(base_value: float, skin_value: float, skin_coverage: float) -> float:
+    mix = skin_parameter_mix(skin_coverage)
+    target = min(base_value, skin_value)
+    return (base_value * (1.0 - mix)) + (target * mix)
 
 
 def pad_image_to_size(image: Image.Image, target_width: int, target_height: int) -> Image.Image:
@@ -293,7 +332,8 @@ def apply_skin_texture_guard(
     skin_mask: np.ndarray,
     strength: float,
     detail_radius: float = 2.0,
-    source_detail_scale: float = 0.35,
+    natural_tone_mix: float = 0.15,
+    mask_blur_radius: float = 4.0,
 ) -> Image.Image:
     if strength <= 0.0:
         return output_tile
@@ -304,7 +344,7 @@ def apply_skin_texture_guard(
     mask_image = Image.fromarray((np.clip(skin_mask, 0.0, 1.0) * 255.0).astype(np.uint8), mode="L")
     if mask_image.size != output_tile.size:
         mask_image = mask_image.resize(output_tile.size, Image.Resampling.LANCZOS)
-    mask_image = mask_image.filter(ImageFilter.GaussianBlur(radius=2.0))
+    mask_image = mask_image.filter(ImageFilter.GaussianBlur(radius=mask_blur_radius))
 
     output_arr = np.asarray(output_tile.convert("RGB"), dtype=np.float32)
     reference_arr = np.asarray(reference_tile.convert("RGB"), dtype=np.float32)
@@ -318,9 +358,11 @@ def apply_skin_texture_guard(
     )
     mask = (np.asarray(mask_image, dtype=np.float32) / 255.0)[:, :, None] * strength
 
-    reference_detail = reference_arr - reference_low_arr
-    source_consistent_skin = output_low_arr + (reference_detail * source_detail_scale)
-    guarded = (source_consistent_skin * mask) + (output_arr * (1.0 - mask))
+    # Hierarchical blend: keep the SD detail path outside skin, but let skin fall back
+    # to the Lanczos-upscaled natural path with only a small low-frequency tone delta.
+    low_frequency_tone_delta = output_low_arr - reference_low_arr
+    natural_path = reference_arr + (low_frequency_tone_delta * natural_tone_mix)
+    guarded = (natural_path * mask) + (output_arr * (1.0 - mask))
     return Image.fromarray(np.clip(guarded, 0.0, 255.0).astype(np.uint8), mode="RGB")
 
 
@@ -378,8 +420,23 @@ def enhance_image(
     if (target_width, target_height) != (scaled_width, scaled_height):
         logger.info("Padded inference canvas to %dx%d.", target_width, target_height)
 
-    tile_width = min(config.tile_size, target_width)
-    tile_height = min(config.tile_size, target_height)
+    full_skin_mask = detect_skin_mask(resized_image) if config.skin_protect else None
+    full_skin_coverage = skin_mask_coverage(full_skin_mask) if full_skin_mask is not None else 0.0
+    effective_tile_size = config.tile_size
+    if (
+        full_skin_coverage > 0.01
+        and config.skin_tile_size is not None
+        and config.skin_tile_size > effective_tile_size
+    ):
+        effective_tile_size = config.skin_tile_size
+        logger.info(
+            "Skin detected across %.2f%% of the inference canvas; using skin-aware tile size %d.",
+            full_skin_coverage * 100.0,
+            effective_tile_size,
+        )
+
+    tile_width = min(effective_tile_size, target_width)
+    tile_height = min(effective_tile_size, target_height)
     overlap_x = min(config.tile_overlap, max(tile_width - 1, 0))
     overlap_y = min(config.tile_overlap, max(tile_height - 1, 0))
 
@@ -400,9 +457,15 @@ def enhance_image(
         logger.info("Using seed: %s (tile mode: %s)", config.seed, config.tile_seed_mode)
     if config.skin_protect:
         logger.info(
-            "Skin protect enabled: mode=%s, skin_strength=%s, texture_guard=%s, texture_guard_strength=%s",
+            (
+                "Skin protect enabled: mode=%s, skin_strength=%s, "
+                "skin_guidance_scale=%s, skin_conditioning_scale=%s, "
+                "texture_guard=%s, texture_guard_strength=%s"
+            ),
             config.skin_protect_mode,
             config.skin_strength,
+            config.skin_guidance_scale,
+            config.skin_conditioning_scale,
             config.skin_texture_guard,
             config.skin_texture_guard_strength,
         )
@@ -410,7 +473,6 @@ def enhance_image(
     accumulator = np.zeros((target_height, target_width, 3), dtype=np.float32)
     weights = np.zeros((target_height, target_width), dtype=np.float32)
     random_seed_source = random.Random(config.seed) if config.tile_seed_mode == "random" and config.seed is not None else None
-    full_skin_mask = detect_skin_mask(resized_image) if config.skin_protect else None
 
     vae_upgraded = False
     fallback_tiles: list[tuple[int, int, str]] = []
@@ -438,7 +500,13 @@ def enhance_image(
             sys.stdout.flush()
             progress_line_length = 0
 
-    def run_generation_once(tile_image: Image.Image, tile_seed: Optional[int], strength: float):
+    def run_generation_once(
+        tile_image: Image.Image,
+        tile_seed: Optional[int],
+        strength: float,
+        conditioning_scale: float,
+        guidance_scale: float,
+    ):
         generator = make_generator(config, tile_seed)
 
         with torch.inference_mode():
@@ -447,10 +515,10 @@ def enhance_image(
                 negative_prompt=config.negative_prompt,
                 image=tile_image,
                 control_image=tile_image,
-                controlnet_conditioning_scale=config.conditioning_scale,
+                controlnet_conditioning_scale=conditioning_scale,
                 strength=strength,
                 num_inference_steps=config.steps,
-                guidance_scale=config.guidance_scale,
+                guidance_scale=guidance_scale,
                 generator=generator,
             )
 
@@ -460,11 +528,13 @@ def enhance_image(
         x: int,
         y: int,
         strength: float,
+        conditioning_scale: float,
+        guidance_scale: float,
         pass_name: str,
     ) -> Image.Image:
         nonlocal vae_upgraded
 
-        result = run_generation_once(tile_image, tile_seed, strength)
+        result = run_generation_once(tile_image, tile_seed, strength, conditioning_scale, guidance_scale)
         output_tile = result.images[0]
         nsfw_flags = getattr(result, "nsfw_content_detected", None)
 
@@ -481,7 +551,7 @@ def enhance_image(
                 logger.info("Retrying tile once with FP32 VAE decode...")
                 vae_upgraded = upgrade_vae_decode_precision(pipe)
                 if vae_upgraded:
-                    result = run_generation_once(tile_image, tile_seed, strength)
+                    result = run_generation_once(tile_image, tile_seed, strength, conditioning_scale, guidance_scale)
                     output_tile = result.images[0]
                     nsfw_flags = getattr(result, "nsfw_content_detected", None)
 
@@ -524,6 +594,34 @@ def enhance_image(
                 skin_coverage = skin_mask_coverage(skin_mask_valid)
                 skin_mask = pad_mask_to_size(skin_mask_valid, tile_width, tile_height)
 
+            tile_strength = config.strength
+            tile_conditioning_scale = config.conditioning_scale
+            tile_guidance_scale = config.guidance_scale
+            if skin_mask is not None and skin_coverage > 0.01:
+                tile_strength = blend_parameter_for_skin(config.strength, config.skin_strength, skin_coverage)
+                tile_conditioning_scale = blend_parameter_for_skin(
+                    config.conditioning_scale,
+                    config.skin_conditioning_scale,
+                    skin_coverage,
+                )
+                tile_guidance_scale = blend_parameter_for_skin(
+                    config.guidance_scale,
+                    config.skin_guidance_scale,
+                    skin_coverage,
+                )
+                logger.debug(
+                    (
+                        "Skin-aware tile params at (%d, %d): coverage=%.3f, "
+                        "strength=%.3f, conditioning=%.3f, guidance=%.3f"
+                    ),
+                    x,
+                    y,
+                    skin_coverage,
+                    tile_strength,
+                    tile_conditioning_scale,
+                    tile_guidance_scale,
+                )
+
             if (
                 skin_mask is not None
                 and config.skin_protect_mode == "dual-pass"
@@ -535,6 +633,8 @@ def enhance_image(
                     x,
                     y,
                     config.skin_strength,
+                    config.skin_conditioning_scale,
+                    config.skin_guidance_scale,
                     "skin",
                 )
             else:
@@ -543,7 +643,9 @@ def enhance_image(
                     tile_seed,
                     x,
                     y,
-                    config.strength,
+                    tile_strength,
+                    tile_conditioning_scale,
+                    tile_guidance_scale,
                     "normal",
                 )
 
@@ -557,6 +659,8 @@ def enhance_image(
                             x,
                             y,
                             config.skin_strength,
+                            config.skin_conditioning_scale,
+                            config.skin_guidance_scale,
                             "skin",
                         )
                         output_tile = blend_skin_tiles(output_tile, skin_tile, skin_mask)

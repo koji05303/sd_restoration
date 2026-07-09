@@ -776,6 +776,9 @@ def run_enhance(
     skin_protect: bool,
     skin_protect_mode: str,
     skin_strength: float,
+    skin_guidance_scale: float,
+    skin_conditioning_scale: float,
+    skin_tile_size: int,
     skin_texture_guard: bool,
     skin_texture_guard_strength: float,
     sharpen: bool,
@@ -797,6 +800,9 @@ def run_enhance(
 
     if tile_size % 8 != 0:
         return None, None, None, "Error: tile_size must be a multiple of 8."
+
+    if int(skin_tile_size) % 8 != 0:
+        return None, None, None, "Error: skin_tile_size must be a multiple of 8."
 
     seed_value = int(seed) if seed is not None else None
     source_image = image.convert("RGB").copy()
@@ -849,6 +855,9 @@ def run_enhance(
             skin_protect=bool(skin_protect),
             skin_protect_mode=skin_protect_mode,
             skin_strength=float(skin_strength),
+            skin_guidance_scale=float(skin_guidance_scale),
+            skin_conditioning_scale=float(skin_conditioning_scale),
+            skin_tile_size=int(skin_tile_size),
             offload_mode=offload_mode,
             sharpen=bool(sharpen),
             contrast=bool(contrast),
@@ -941,7 +950,12 @@ def build_ui() -> gr.Blocks:
                             "Upload the image you want to restore. The engine will resize, tile, and blend it into a single polished output.",
                             elem_classes="section-kicker",
                         )
-                        input_image = gr.Image(type="pil", label="Input Image", elem_classes="lux-image")
+                        input_image = gr.Image(
+                            type="pil",
+                            format="png",
+                            label="Input Image",
+                            elem_classes="lux-image",
+                        )
                         run_button = gr.Button(
                             "Render Premium Pass",
                             variant="primary",
@@ -988,21 +1002,21 @@ def build_ui() -> gr.Blocks:
                                 strength = gr.Slider(
                                     minimum=0.0,
                                     maximum=1.0,
-                                    value=0.25,
+                                    value=0.2,
                                     step=0.01,
                                     label="Strength",
                                 )
                                 conditioning_scale = gr.Slider(
                                     minimum=0.1,
                                     maximum=2.0,
-                                    value=1.3,
+                                    value=0.8,
                                     step=0.05,
                                     label="ControlNet Conditioning Scale",
                                 )
                                 guidance_scale = gr.Slider(
                                     minimum=1.0,
                                     maximum=15.0,
-                                    value=5.5,
+                                    value=4.2,
                                     step=0.5,
                                     label="Guidance Scale",
                                 )
@@ -1037,6 +1051,27 @@ def build_ui() -> gr.Blocks:
                                     step=0.01,
                                     label="Skin Strength",
                                 )
+                                skin_guidance_scale = gr.Slider(
+                                    minimum=1.0,
+                                    maximum=8.0,
+                                    value=3.8,
+                                    step=0.1,
+                                    label="Skin Guidance Scale",
+                                )
+                                skin_conditioning_scale = gr.Slider(
+                                    minimum=0.1,
+                                    maximum=1.5,
+                                    value=0.65,
+                                    step=0.05,
+                                    label="Skin ControlNet Scale",
+                                )
+                                skin_tile_size = gr.Slider(
+                                    minimum=256,
+                                    maximum=1024,
+                                    value=640,
+                                    step=64,
+                                    label="Skin Tile Size",
+                                )
                                 skin_texture_guard = gr.Checkbox(
                                     value=True,
                                     label="Skin Texture Guard",
@@ -1044,7 +1079,7 @@ def build_ui() -> gr.Blocks:
                                 skin_texture_guard_strength = gr.Slider(
                                     minimum=0.0,
                                     maximum=1.0,
-                                    value=0.65,
+                                    value=0.72,
                                     step=0.01,
                                     label="Skin Texture Guard Strength",
                                 )
@@ -1137,17 +1172,24 @@ def build_ui() -> gr.Blocks:
                             "The final composited frame appears here after tiled processing completes.",
                             elem_classes="section-kicker",
                         )
-                        output_image = gr.Image(type="pil", label="Enhanced Image", elem_classes="lux-output")
+                        output_image = gr.Image(
+                            type="pil",
+                            format="png",
+                            label="Enhanced Image",
+                            elem_classes="lux-output",
+                        )
                         gr.HTML("<div class='compare-kicker'>Before / After</div>")
                         with gr.Row(elem_classes="compare-grid"):
                             compare_before = gr.Image(
                                 type="pil",
+                                format="png",
                                 label="Before",
                                 interactive=False,
                                 elem_classes="compare-image",
                             )
                             compare_after = gr.Image(
                                 type="pil",
+                                format="png",
                                 label="After",
                                 interactive=False,
                                 elem_classes="compare-image",
@@ -1191,6 +1233,9 @@ def build_ui() -> gr.Blocks:
                 skin_protect,
                 skin_protect_mode,
                 skin_strength,
+                skin_guidance_scale,
+                skin_conditioning_scale,
+                skin_tile_size,
                 skin_texture_guard,
                 skin_texture_guard_strength,
                 sharpen,

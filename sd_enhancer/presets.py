@@ -10,9 +10,9 @@ class EnhancementPreset:
     model_id: str = DEFAULT_MODEL_ID
     controlnet_id: str = DEFAULT_CONTROLNET_ID
     upscale_factor: float = 2.0
-    strength: float = 0.25
-    conditioning_scale: float = 1.3
-    guidance_scale: float = 5.5
+    strength: float = 0.2
+    conditioning_scale: float = 0.8
+    guidance_scale: float = 4.2
     steps: int = 25
     tile_size: int = 512
     tile_overlap: int = 128
@@ -21,7 +21,10 @@ class EnhancementPreset:
     skin_protect_mode: str = "tone"
     skin_strength: float = 0.16
     skin_texture_guard: bool = True
-    skin_texture_guard_strength: float = 0.65
+    skin_texture_guard_strength: float = 0.72
+    skin_guidance_scale: float = 3.8
+    skin_conditioning_scale: float = 0.65
+    skin_tile_size: int | None = 640
     offload_mode: str = "none"
 
 
@@ -56,10 +59,12 @@ ANIME_PRESET = EnhancementPreset(
         "3d render"
     ),
     strength=0.32,
+    conditioning_scale=1.0,
     guidance_scale=8.0,
     steps=28,
     skin_protect=False,
     skin_texture_guard=False,
+    skin_tile_size=None,
 )
 
 DENOISE_PRESET = EnhancementPreset(
@@ -76,7 +81,7 @@ DENOISE_PRESET = EnhancementPreset(
         "heavy noise, "
         "blurry, "
         "overprocessed, "
-        "plastic skin, "
+        "synthetic texture, "
         "oversharpened, "
         "compression artifacts, "
         "color shift, "
@@ -84,10 +89,13 @@ DENOISE_PRESET = EnhancementPreset(
         "watermark"
     ),
     upscale_factor=1.0,
-    strength=0.22,
-    guidance_scale=5.5,
+    strength=0.18,
+    conditioning_scale=0.75,
+    guidance_scale=4.0,
     steps=20,
-    skin_texture_guard_strength=0.7,
+    skin_texture_guard_strength=0.75,
+    skin_guidance_scale=3.5,
+    skin_conditioning_scale=0.6,
 )
 
 UPSCALE_PRESET = EnhancementPreset(
@@ -113,20 +121,26 @@ UPSCALE_PRESET = EnhancementPreset(
         "watermark"
     ),
     upscale_factor=4.0,
-    strength=0.25,
-    guidance_scale=5.5,
+    strength=0.2,
+    conditioning_scale=0.8,
+    guidance_scale=4.2,
     steps=24,
-    skin_texture_guard_strength=0.7,
+    skin_texture_guard_strength=0.75,
+    skin_guidance_scale=3.8,
+    skin_conditioning_scale=0.65,
+    skin_tile_size=768,
 )
 
 LOW_VRAM_PRESET = EnhancementPreset(
     prompt=DEFAULT_PROMPT,
     negative_prompt=DEFAULT_NEGATIVE_PROMPT,
     upscale_factor=2.0,
-    strength=0.25,
-    guidance_scale=5.5,
+    strength=0.2,
+    conditioning_scale=0.8,
+    guidance_scale=4.2,
     steps=20,
     tile_size=384,
+    skin_tile_size=None,
     offload_mode="sequential",
 )
 

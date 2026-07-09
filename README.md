@@ -110,10 +110,13 @@ python enhancer.py -i input/example.jpg -o output/example_skin_safe.png \
   --skin-protect \
   --skin-protect-mode tone \
   --skin-texture-guard \
-  --skin-texture-guard-strength 0.65 \
-  --strength 0.25 \
-  --guidance-scale 5.5 \
-  --conditioning-scale 1.3 \
+  --skin-texture-guard-strength 0.72 \
+  --skin-guidance-scale 3.8 \
+  --skin-conditioning-scale 0.65 \
+  --skin-tile-size 640 \
+  --strength 0.20 \
+  --guidance-scale 4.2 \
+  --conditioning-scale 0.8 \
   --tile-overlap 128 \
   --overwrite
 ```
@@ -162,7 +165,10 @@ flowchart TD
 - tile 位置使用固定 stride：`tile_size - tile_overlap`；邊緣 tile 以 padding 處理，而不是把最後一塊往回拉。
 - skin detection 只在 resized full image 上計算一次，再依 tile crop/pad，避免每個 tile 各自判斷造成 mask 不連續。
 - `skin-protect-mode tone` 只校正低頻膚色，不額外跑第二次 SD pass。
-- `skin-texture-guard` 會在 skin mask 內壓低不穩定的 generated high-frequency skin detail，減少皮膚大塊不規則 texture。
+- skin-heavy tile 會動態降低 `strength`、`guidance_scale` 與 `conditioning_scale`，避免模型在低解析度皮膚區過度重繪。
+- `skin-texture-guard` 會做 hierarchical blending：非皮膚區保留 SD detail path，皮膚區回到 Lanczos upscaled natural path，只混入少量低頻 tone delta。
+- 若偵測到皮膚且設定了 `skin_tile_size`，pipeline 會使用較大的 skin-aware tile size，減少臉部與皮膚區域的拼接點。
+- CUDA FP16 pipeline 會主動 upcast VAE decode 到 FP32，降低大片相似膚色區的條紋與 near-black 風險。
 - tile output 會使用 cosine overlap mask 加權累積，再用 total weights normalize。
 - near-black tile 會視為錯誤；若是 FP16 VAE decode 問題，會嘗試一次 FP32 VAE decode retry。
 
@@ -197,11 +203,11 @@ flowchart TD
 
 | Preset | 用途 | 主要預設 |
 | --- | --- | --- |
-| `photo` | 一般照片修復 | x2、`strength=0.25`、`conditioning_scale=1.3`、`guidance_scale=5.5`、skin guard on |
+| `photo` | 一般照片修復 | x2、`strength=0.20`、`conditioning_scale=0.8`、`guidance_scale=4.2`、skin guard on |
 | `anime` | 動漫插畫修復 | x2、`strength=0.32`、`guidance_scale=8.0`、skin guard off |
-| `denoise` | 同尺寸降噪清理 | x1、`strength=0.22`、skin guard strength `0.7` |
-| `upscale` | 較積極的放大 | x4、`strength=0.25`、skin guard strength `0.7` |
-| `low-vram` | 低 VRAM workflow | x2、`tile_size=384`、sequential CPU offload |
+| `denoise` | 同尺寸降噪清理 | x1、`strength=0.18`、`conditioning_scale=0.75`、skin guard strength `0.75` |
+| `upscale` | 較積極的放大 | x4、`strength=0.20`、`conditioning_scale=0.8`、skin guard strength `0.75` |
+| `low-vram` | 低 VRAM workflow | x2、`strength=0.20`、`tile_size=384`、sequential CPU offload |
 
 ## SD Enhancer 參數定義
 
@@ -247,7 +253,10 @@ flowchart TD
 | --- | --- | --- | --- |
 | `--skin-protect`, `--no-skin-protect` | boolean | preset value | 啟用或關閉 full-image skin mask 保護。 |
 | `--skin-protect-mode` | `tone`, `dual-pass` | preset value | `tone` 在一般 generation 後校正膚色；`dual-pass` 會對皮膚區額外跑低 strength SD pass。 |
-| `--skin-strength` | float 0-1 | preset value | `dual-pass` skin pass 使用的 denoising strength。 |
+| `--skin-strength` | float 0-1 | preset value | skin-heavy tile 的目標 denoising strength；`dual-pass` skin pass 也使用這個值。 |
+| `--skin-guidance-scale` | float > 0 | preset value | skin-heavy tile 的目標 CFG，pipeline 會依 skin coverage 從一般 `guidance_scale` 混合到此值。 |
+| `--skin-conditioning-scale` | float > 0 | preset value | skin-heavy tile 的目標 ControlNet scale，pipeline 會依 skin coverage 從一般 `conditioning_scale` 混合到此值。 |
+| `--skin-tile-size` | positive int，需為 8 的倍數 | preset value | 偵測到皮膚時可使用的較大 tile size，用於降低臉部/皮膚拼接點。 |
 | `--skin-texture-guard`, `--no-skin-texture-guard` | boolean | preset value | 在 skin mask 內抑制不穩定 generated skin texture。 |
 | `--skin-texture-guard-strength` | float 0-1 | preset value | 高頻皮膚紋理抑制強度。 |
 
@@ -296,8 +305,9 @@ flowchart TD
 | `overwrite` | 是否允許覆蓋輸出。 |
 | `tile_size`, `tile_overlap`, `tile_seed_mode` | tile 幾何與 seed 行為。 |
 | `preset` | preset 名稱或呼叫來源。 |
-| `skin_protect`, `skin_protect_mode`, `skin_strength` | skin mask 與可選 skin pass 行為。 |
-| `skin_texture_guard`, `skin_texture_guard_strength` | 高頻皮膚紋理抑制。 |
+| `skin_protect`, `skin_protect_mode`, `skin_strength` | skin mask 與 skin-region denoising 權限控制。 |
+| `skin_guidance_scale`, `skin_conditioning_scale`, `skin_tile_size` | skin-heavy tile 的 CFG、ControlNet scale 與 tile size 區域引導。 |
+| `skin_texture_guard`, `skin_texture_guard_strength` | hierarchical skin texture blending 強度。 |
 | `sharpen`, `contrast`, `match_color_input` | 最終 postprocess 控制。 |
 
 ## Pure PSR 參數定義
@@ -358,14 +368,17 @@ metadata sidecar 會記錄：
 | Setting | Suggested value |
 | --- | --- |
 | `preset` | `photo` |
-| `strength` | `0.25` 或更低 |
-| `guidance_scale` | `5.5` |
-| `conditioning_scale` | `1.3` |
+| `strength` | `0.20` 或更低 |
+| `guidance_scale` | `4.2`，可降到 `3.0` 到 `4.0` |
+| `conditioning_scale` | `0.8`，皮膚偽影嚴重時降到 `0.6` 到 `0.7` |
 | `tile_size` | `512` |
 | `tile_overlap` | `128` 到 `192` |
 | `tile_seed_mode` | `same` |
 | `skin_protect_mode` | `tone` |
-| `skin_texture_guard_strength` | `0.65` 到 `0.75` |
+| `skin_guidance_scale` | `3.8` |
+| `skin_conditioning_scale` | `0.65` |
+| `skin_tile_size` | `640`，低 VRAM 時關閉或維持 `512` |
+| `skin_texture_guard_strength` | `0.72` 到 `0.8` |
 
 除非某張圖真的需要，否則不建議優先使用 `dual-pass`。它成本較高，而且可能把第二套 generated skin detail 混進皮膚區域。
 

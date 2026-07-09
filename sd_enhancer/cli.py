@@ -253,6 +253,24 @@ def create_parser() -> argparse.ArgumentParser:
         help="Denoising strength used in dual-pass skin regions when --skin-protect is enabled.",
     )
     generation_group.add_argument(
+        "--skin-guidance-scale",
+        type=positive_float,
+        default=None,
+        help="Lower CFG value used on skin-heavy tiles.",
+    )
+    generation_group.add_argument(
+        "--skin-conditioning-scale",
+        type=positive_float,
+        default=None,
+        help="Lower ControlNet conditioning value used on skin-heavy tiles.",
+    )
+    generation_group.add_argument(
+        "--skin-tile-size",
+        type=positive_int,
+        default=None,
+        help="Optional larger tile size used when skin is detected in the image.",
+    )
+    generation_group.add_argument(
         "--skin-texture-guard",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -393,6 +411,9 @@ def build_config(args: argparse.Namespace, image_path: Path, output_path: Path) 
         match_color_input=args.match_color_input,
         skin_texture_guard=value_or_preset(args, preset, "skin_texture_guard"),
         skin_texture_guard_strength=value_or_preset(args, preset, "skin_texture_guard_strength"),
+        skin_guidance_scale=value_or_preset(args, preset, "skin_guidance_scale"),
+        skin_conditioning_scale=value_or_preset(args, preset, "skin_conditioning_scale"),
+        skin_tile_size=value_or_preset(args, preset, "skin_tile_size"),
     )
 
 
@@ -407,12 +428,16 @@ def parse_args(argv: Optional[list[str]] = None) -> list[EnhanceConfig]:
     preset = get_preset(args.preset)
     tile_size = args.tile_size if args.tile_size is not None else preset.tile_size
     tile_overlap = args.tile_overlap if args.tile_overlap is not None else preset.tile_overlap
+    skin_tile_size = args.skin_tile_size if args.skin_tile_size is not None else preset.skin_tile_size
 
     if tile_overlap >= tile_size:
         parser.error("--tile-overlap must be smaller than --tile-size.")
 
     if tile_size % 8 != 0:
         parser.error("--tile-size must be a multiple of 8.")
+
+    if skin_tile_size is not None and skin_tile_size % 8 != 0:
+        parser.error("--skin-tile-size must be a multiple of 8.")
 
     if args.input_dir is not None:
         if args.output.exists() and not args.output.is_dir():
