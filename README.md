@@ -54,12 +54,6 @@ flowchart TD
 
 ## 環境
 
-本機工作流可使用 Conda 環境 `yolo`：
-
-```bash
-conda activate yolo
-```
-
 主要依賴如下：
 
 | 工作流 | 主要套件 |
