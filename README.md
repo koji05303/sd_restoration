@@ -127,6 +127,11 @@ python enhancer.py -i input/example.jpg -o output/example_skin_safe.png \
 python gradio_app.py --host 127.0.0.1 --port 7860
 ```
 
+`gradio_app.py` 支援兩種輸入：
+
+- 單張：使用 `Input Image` 與 `Run Enhancement`，輸出 before/after preview。
+- 批次：使用 `Batch Images` 選多張圖，按 `Run Batch` 後會透過 Gradio queue 逐張處理；完成的 PNG 會逐一加入 `Batch Gallery`，最後提供 `enhanced_batch.zip` 一次下載整批輸出。
+
 兩個 Gradio app 預設都使用 `7860`。若要同時啟動，請把其中一個換到其他 port：
 
 ```bash
@@ -333,7 +338,7 @@ flowchart TD
 | App | 啟動指令 | Backend | 說明 |
 | --- | --- | --- | --- |
 | `psr_gradio.py` | `python psr_gradio.py --host 127.0.0.1 --port 7860` | `PureSREngine` | 支援單張、batch upload、PNG/JPG download、GPU status、tile progress。 |
-| `gradio_app.py` | `python gradio_app.py --host 127.0.0.1 --port 7860` | `sd_enhancer.pipeline` | 支援 SD prompt、tiling/runtime controls、skin guard controls、before/after preview、process logs。 |
+| `gradio_app.py` | `python gradio_app.py --host 127.0.0.1 --port 7860` | `sd_enhancer.pipeline` | 支援 SD prompt、preset selection、single preview、queued batch gallery、ZIP download、process logs。 |
 
 兩個 app 預設都使用 `7860`；若要同時啟動，請將第二個 app 改到其他 port。
 
@@ -350,6 +355,7 @@ flowchart TD
 - SD enhancer 一律輸出 PNG。若 `--output` 指定的是非 PNG 檔名，副檔名會被正規化為 `.png`。
 - 單張模式若 `--output` 是資料夾，會寫出 `<stem>_enhanced.png`。
 - batch 模式會在輸出資料夾下寫出 `<stem>_enhanced.png`，並保留相對子資料夾結構。
+- `gradio_app.py` 的批次模式會在暫存資料夾產生 `001_<stem>_enhanced.png` 形式的 PNG，並打包成 `enhanced_batch.zip` 供下載。
 - 每張輸出旁邊會寫一個 metadata sidecar：`<output_stem>.json`。
 
 metadata sidecar 會記錄：

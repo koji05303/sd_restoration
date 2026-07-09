@@ -6,8 +6,9 @@ import io
 import logging
 import shutil
 import tempfile
+import zipfile
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import gradio as gr
 from PIL import Image
@@ -21,6 +22,7 @@ from sd_enhancer.config import (
     OFFLOAD_MODES,
     SKIN_PROTECT_MODES,
     TILE_SEED_MODES,
+    VALID_IMAGE_EXTENSIONS,
 )
 from sd_enhancer.presets import PRESETS, get_preset
 
@@ -604,6 +606,91 @@ def preset_to_ui_values(preset_name: str):
     )
 
 
+def gradio_file_path(file_value: Any) -> Path:
+    if isinstance(file_value, (str, Path)):
+        return Path(file_value)
+    if isinstance(file_value, dict):
+        path = file_value.get("path") or file_value.get("name")
+        if path:
+            return Path(path)
+    name = getattr(file_value, "name", None)
+    if name:
+        return Path(name)
+    raise TypeError(f"Unsupported uploaded file value: {type(file_value)!r}")
+
+
+def build_gradio_config(
+    input_path: Path,
+    output_path: Path,
+    preset_name: str,
+    prompt: str,
+    negative_prompt: str,
+    upscale_factor: float,
+    strength: float,
+    conditioning_scale: float,
+    guidance_scale: float,
+    steps: int,
+    seed_value: Optional[int],
+    tile_size: int,
+    tile_overlap: int,
+    tile_seed_mode: str,
+    tile_batch_size: int,
+    skin_protect: bool,
+    skin_protect_mode: str,
+    skin_strength: float,
+    skin_guidance_scale: float,
+    skin_conditioning_scale: float,
+    skin_tile_size: int,
+    skin_texture_guard: bool,
+    skin_texture_guard_strength: float,
+    sharpen: bool,
+    contrast: bool,
+    match_color_input: bool,
+    model_id: str,
+    controlnet_id: str,
+    offload_mode: str,
+    resolved_device: str,
+    resolved_dtype,
+    use_xformers: bool,
+) -> EnhanceConfig:
+    preset = get_preset(preset_name)
+    return EnhanceConfig(
+        image_path=input_path,
+        output_path=output_path,
+        prompt=prompt.strip() if prompt.strip() else preset.prompt,
+        negative_prompt=negative_prompt.strip() if negative_prompt.strip() else preset.negative_prompt,
+        model_id=model_id.strip() if model_id.strip() else preset.model_id,
+        controlnet_id=controlnet_id.strip() if controlnet_id.strip() else preset.controlnet_id,
+        upscale_factor=float(upscale_factor),
+        strength=float(strength),
+        conditioning_scale=float(conditioning_scale),
+        guidance_scale=float(guidance_scale),
+        steps=int(steps),
+        seed=seed_value,
+        device=resolved_device,
+        dtype=resolved_dtype,
+        use_xformers=bool(use_xformers),
+        overwrite=True,
+        tile_size=int(tile_size),
+        tile_overlap=int(tile_overlap),
+        tile_seed_mode=tile_seed_mode,
+        tile_batch_size=int(tile_batch_size),
+        preset=preset_name,
+        skin_protect=bool(skin_protect),
+        skin_protect_mode=skin_protect_mode,
+        skin_strength=float(skin_strength),
+        skin_guidance_scale=float(skin_guidance_scale),
+        skin_conditioning_scale=float(skin_conditioning_scale),
+        skin_tile_size=int(skin_tile_size),
+        offload_mode=offload_mode,
+        sharpen=bool(sharpen),
+        contrast=bool(contrast),
+        match_color_input=bool(match_color_input),
+        skin_texture_guard=bool(skin_texture_guard),
+        skin_texture_guard_strength=float(skin_texture_guard_strength),
+    )
+
+
 def run_enhance(
     image: Optional[Image.Image],
     preset_name: str,
@@ -677,44 +764,39 @@ def run_enhance(
 
         resolved_device = resolve_device(device)
         resolved_dtype = resolve_dtype(dtype, resolved_device)
-        preset = get_preset(preset_name)
-
-        config = EnhanceConfig(
-            image_path=input_path,
-            output_path=output_path,
-            prompt=prompt.strip() if prompt.strip() else preset.prompt,
-            negative_prompt=(
-                negative_prompt.strip() if negative_prompt.strip() else preset.negative_prompt
-            ),
-            model_id=model_id.strip() if model_id.strip() else preset.model_id,
-            controlnet_id=controlnet_id.strip() if controlnet_id.strip() else preset.controlnet_id,
-            upscale_factor=float(upscale_factor),
-            strength=float(strength),
-            conditioning_scale=float(conditioning_scale),
-            guidance_scale=float(guidance_scale),
-            steps=int(steps),
-            seed=seed_value,
-            device=resolved_device,
-            dtype=resolved_dtype,
-            use_xformers=bool(use_xformers),
-            overwrite=True,
-            tile_size=int(tile_size),
-            tile_overlap=int(tile_overlap),
-            tile_seed_mode=tile_seed_mode,
-            tile_batch_size=int(tile_batch_size),
-            preset=preset_name,
-            skin_protect=bool(skin_protect),
-            skin_protect_mode=skin_protect_mode,
-            skin_strength=float(skin_strength),
-            skin_guidance_scale=float(skin_guidance_scale),
-            skin_conditioning_scale=float(skin_conditioning_scale),
-            skin_tile_size=int(skin_tile_size),
-            offload_mode=offload_mode,
-            sharpen=bool(sharpen),
-            contrast=bool(contrast),
-            match_color_input=bool(match_color_input),
-            skin_texture_guard=bool(skin_texture_guard),
-            skin_texture_guard_strength=float(skin_texture_guard_strength),
+        config = build_gradio_config(
+            input_path,
+            output_path,
+            preset_name,
+            prompt,
+            negative_prompt,
+            upscale_factor,
+            strength,
+            conditioning_scale,
+            guidance_scale,
+            steps,
+            seed_value,
+            tile_size,
+            tile_overlap,
+            tile_seed_mode,
+            tile_batch_size,
+            skin_protect,
+            skin_protect_mode,
+            skin_strength,
+            skin_guidance_scale,
+            skin_conditioning_scale,
+            skin_tile_size,
+            skin_texture_guard,
+            skin_texture_guard_strength,
+            sharpen,
+            contrast,
+            match_color_input,
+            model_id,
+            controlnet_id,
+            offload_mode,
+            resolved_device,
+            resolved_dtype,
+            use_xformers,
         )
 
         progress(0.15, desc="Running enhancement")
@@ -749,6 +831,172 @@ def run_enhance(
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+def run_batch_enhance(
+    batch_files: Optional[list[Any]],
+    preset_name: str,
+    prompt: str,
+    negative_prompt: str,
+    upscale_factor: float,
+    strength: float,
+    conditioning_scale: float,
+    guidance_scale: float,
+    steps: int,
+    seed: Optional[float],
+    tile_size: int,
+    tile_overlap: int,
+    tile_seed_mode: str,
+    tile_batch_size: int,
+    skin_protect: bool,
+    skin_protect_mode: str,
+    skin_strength: float,
+    skin_guidance_scale: float,
+    skin_conditioning_scale: float,
+    skin_tile_size: int,
+    skin_texture_guard: bool,
+    skin_texture_guard_strength: float,
+    sharpen: bool,
+    contrast: bool,
+    match_color_input: bool,
+    model_id: str,
+    controlnet_id: str,
+    offload_mode: str,
+    device: str,
+    dtype: str,
+    use_xformers: bool,
+    progress=gr.Progress(track_tqdm=False),
+):
+    if not batch_files:
+        yield [], None, "Error: Please upload one or more batch images."
+        return
+
+    if tile_overlap >= tile_size:
+        yield [], None, "Error: tile_overlap must be smaller than tile_size."
+        return
+
+    if tile_size % 8 != 0:
+        yield [], None, "Error: tile_size must be a multiple of 8."
+        return
+
+    if int(tile_batch_size) <= 0:
+        yield [], None, "Error: tile_batch_size must be a positive integer."
+        return
+
+    if int(skin_tile_size) % 8 != 0:
+        yield [], None, "Error: skin_tile_size must be a multiple of 8."
+        return
+
+    seed_value = int(seed) if seed is not None else None
+    work_dir = Path(tempfile.mkdtemp(prefix="sd_restoration_batch_"))
+    output_dir = work_dir / "outputs"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    logs = io.StringIO()
+    log_handler = logging.StreamHandler(logs)
+    log_handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s:%(message)s"))
+    enhancer_logger = logging.getLogger("sd_enhancer")
+    previous_log_level = enhancer_logger.level
+    previous_propagate = enhancer_logger.propagate
+    enhancer_logger.addHandler(log_handler)
+    enhancer_logger.setLevel(logging.INFO)
+    enhancer_logger.propagate = False
+
+    gallery_items: list[tuple[Image.Image, str]] = []
+    output_paths: list[Path] = []
+
+    try:
+        progress(0.02, desc="Preparing batch")
+        uploaded_paths = [gradio_file_path(file_value) for file_value in batch_files]
+        for uploaded_path in uploaded_paths:
+            if uploaded_path.suffix.lower() not in VALID_IMAGE_EXTENSIONS:
+                supported = ", ".join(sorted(VALID_IMAGE_EXTENSIONS))
+                yield gallery_items, None, f"Error: Unsupported image type '{uploaded_path.suffix}'. Supported: {supported}"
+                return
+
+        from sd_enhancer.pipeline import create_pipeline, enhance_image, resolve_device, resolve_dtype
+
+        resolved_device = resolve_device(device)
+        resolved_dtype = resolve_dtype(dtype, resolved_device)
+
+        configs = []
+        for index, uploaded_path in enumerate(uploaded_paths, start=1):
+            output_path = output_dir / f"{index:03d}_{uploaded_path.stem}_enhanced.png"
+            configs.append(
+                build_gradio_config(
+                    uploaded_path,
+                    output_path,
+                    preset_name,
+                    prompt,
+                    negative_prompt,
+                    upscale_factor,
+                    strength,
+                    conditioning_scale,
+                    guidance_scale,
+                    steps,
+                    seed_value,
+                    tile_size,
+                    tile_overlap,
+                    tile_seed_mode,
+                    tile_batch_size,
+                    skin_protect,
+                    skin_protect_mode,
+                    skin_strength,
+                    skin_guidance_scale,
+                    skin_conditioning_scale,
+                    skin_tile_size,
+                    skin_texture_guard,
+                    skin_texture_guard_strength,
+                    sharpen,
+                    contrast,
+                    match_color_input,
+                    model_id,
+                    controlnet_id,
+                    offload_mode,
+                    resolved_device,
+                    resolved_dtype,
+                    use_xformers,
+                )
+            )
+
+        total = len(configs)
+        logs.write(f"Batch queued: {total} image(s).\\n")
+        with contextlib.redirect_stdout(logs):
+            pipe = create_pipeline(configs[0])
+
+        for index, config in enumerate(configs, start=1):
+            progress(0.05 + ((index - 1) / total) * 0.85, desc=f"Enhancing {index}/{total}")
+            logs.write(f"\\nBatch {index}/{total}: {config.image_path.name}\\n")
+            with contextlib.redirect_stdout(logs):
+                enhance_image(config, pipe=pipe)
+
+            with Image.open(config.output_path) as enhanced:
+                output_image = enhanced.convert("RGB").copy()
+            gallery_items.append((output_image, config.output_path.name))
+            output_paths.append(config.output_path)
+            progress(0.05 + (index / total) * 0.85, desc=f"Completed {index}/{total}")
+            yield gallery_items, None, logs.getvalue().strip() or "Batch processing..."
+
+        progress(0.95, desc="Packaging batch")
+        zip_path = work_dir / "enhanced_batch.zip"
+        with zipfile.ZipFile(zip_path, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for output_path in output_paths:
+                archive.write(output_path, arcname=output_path.name)
+
+        progress(1.0, desc="Done")
+        logs.write(f"\\nBatch archive saved to: {zip_path}\\n")
+        yield gallery_items, str(zip_path), logs.getvalue().strip() or "Batch finished."
+    except Exception as exc:
+        output_logs = logs.getvalue().strip()
+        message = f"Error: {exc}"
+        if output_logs:
+            message = f"{message}\\n\\nLogs:\\n{output_logs}"
+        yield gallery_items, None, message
+    finally:
+        enhancer_logger.removeHandler(log_handler)
+        enhancer_logger.setLevel(previous_log_level)
+        enhancer_logger.propagate = previous_propagate
+        log_handler.close()
+
+
 def build_ui() -> gr.Blocks:
     with gr.Blocks(title="Lustre Restore Studio") as demo:
         with gr.Column(elem_classes="app-shell"):
@@ -781,6 +1029,17 @@ def build_ui() -> gr.Blocks:
                             "Run Enhancement",
                             variant="primary",
                             elem_id="enhance-button",
+                        )
+                        batch_files = gr.File(
+                            file_count="multiple",
+                            file_types=sorted(VALID_IMAGE_EXTENSIONS),
+                            type="filepath",
+                            label="Batch Images",
+                        )
+                        batch_button = gr.Button(
+                            "Run Batch",
+                            variant="secondary",
+                            elem_id="batch-button",
                         )
 
                     with gr.Group(elem_classes="section-card"):
@@ -978,6 +1237,19 @@ def build_ui() -> gr.Blocks:
                                 interactive=False,
                                 elem_classes="compare-image",
                             )
+                        batch_gallery = gr.Gallery(
+                            label="Batch Gallery",
+                            format="png",
+                            type="pil",
+                            columns=2,
+                            rows=2,
+                            object_fit="contain",
+                            elem_classes="lux-gallery",
+                        )
+                        batch_zip = gr.File(
+                            label="Download Batch ZIP",
+                            interactive=False,
+                        )
 
                     with gr.Group(elem_classes="section-card"):
                         gr.Markdown("### Process Log", elem_classes="section-heading")
@@ -1052,6 +1324,44 @@ def build_ui() -> gr.Blocks:
             ],
             outputs=[output_image, compare_before, compare_after, logs],
             api_name="enhance",
+        )
+        batch_button.click(
+            fn=run_batch_enhance,
+            inputs=[
+                batch_files,
+                preset_name,
+                prompt,
+                negative_prompt,
+                upscale_factor,
+                strength,
+                conditioning_scale,
+                guidance_scale,
+                steps,
+                seed,
+                tile_size,
+                tile_overlap,
+                tile_seed_mode,
+                tile_batch_size,
+                skin_protect,
+                skin_protect_mode,
+                skin_strength,
+                skin_guidance_scale,
+                skin_conditioning_scale,
+                skin_tile_size,
+                skin_texture_guard,
+                skin_texture_guard_strength,
+                sharpen,
+                contrast,
+                match_color_input,
+                model_id,
+                controlnet_id,
+                offload_mode,
+                device,
+                dtype,
+                use_xformers,
+            ],
+            outputs=[batch_gallery, batch_zip, logs],
+            api_name="batch_enhance",
         )
 
     return demo
