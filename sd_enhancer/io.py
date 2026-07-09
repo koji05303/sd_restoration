@@ -97,6 +97,8 @@ def write_metadata_sidecar(
         "skin_protect": config.skin_protect,
         "skin_protect_mode": config.skin_protect_mode,
         "skin_strength": config.skin_strength,
+        "skin_texture_guard": config.skin_texture_guard,
+        "skin_texture_guard_strength": config.skin_texture_guard_strength,
         "offload": config.offload_mode,
         "device": config.device,
         "dtype": str(config.dtype).replace("torch.", ""),

@@ -17,6 +17,11 @@ class EnhancementPreset:
     tile_size: int = 512
     tile_overlap: int = 128
     tile_seed_mode: str = "same"
+    skin_protect: bool = True
+    skin_protect_mode: str = "tone"
+    skin_strength: float = 0.16
+    skin_texture_guard: bool = True
+    skin_texture_guard_strength: float = 0.65
     offload_mode: str = "none"
 
 
@@ -53,6 +58,8 @@ ANIME_PRESET = EnhancementPreset(
     strength=0.32,
     guidance_scale=8.0,
     steps=28,
+    skin_protect=False,
+    skin_texture_guard=False,
 )
 
 DENOISE_PRESET = EnhancementPreset(
@@ -80,6 +87,7 @@ DENOISE_PRESET = EnhancementPreset(
     strength=0.22,
     guidance_scale=5.5,
     steps=20,
+    skin_texture_guard_strength=0.7,
 )
 
 UPSCALE_PRESET = EnhancementPreset(
@@ -108,6 +116,7 @@ UPSCALE_PRESET = EnhancementPreset(
     strength=0.25,
     guidance_scale=5.5,
     steps=24,
+    skin_texture_guard_strength=0.7,
 )
 
 LOW_VRAM_PRESET = EnhancementPreset(

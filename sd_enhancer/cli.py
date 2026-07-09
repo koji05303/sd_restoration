@@ -199,20 +199,33 @@ def create_parser() -> argparse.ArgumentParser:
     )
     generation_group.add_argument(
         "--skin-protect",
-        action="store_true",
+        action=argparse.BooleanOptionalAction,
+        default=None,
         help="Protect detected skin with a full-image feathered mask.",
     )
     generation_group.add_argument(
         "--skin-protect-mode",
         choices=SKIN_PROTECT_MODES,
-        default="tone",
+        default=None,
         help="Skin protection strategy. tone is faster; dual-pass runs an extra low-strength SD pass.",
     )
     generation_group.add_argument(
         "--skin-strength",
         type=float_in_range(0.0, 1.0),
-        default=0.18,
+        default=None,
         help="Denoising strength used in dual-pass skin regions when --skin-protect is enabled.",
+    )
+    generation_group.add_argument(
+        "--skin-texture-guard",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Suppress unstable generated high-frequency texture inside detected skin regions.",
+    )
+    generation_group.add_argument(
+        "--skin-texture-guard-strength",
+        type=float_in_range(0.0, 1.0),
+        default=None,
+        help="How strongly skin texture guard replaces generated skin detail with source-consistent detail.",
     )
 
     postprocess_group = parser.add_argument_group("Postprocess options")
@@ -316,13 +329,31 @@ def build_config(args: argparse.Namespace, image_path: Path, output_path: Path) 
             else preset.tile_seed_mode
         ),
         preset=args.preset,
-        skin_protect=args.skin_protect,
-        skin_protect_mode=args.skin_protect_mode,
-        skin_strength=args.skin_strength,
+        skin_protect=(
+            args.skin_protect
+            if args.skin_protect is not None
+            else preset.skin_protect
+        ),
+        skin_protect_mode=(
+            args.skin_protect_mode
+            if args.skin_protect_mode is not None
+            else preset.skin_protect_mode
+        ),
+        skin_strength=args.skin_strength if args.skin_strength is not None else preset.skin_strength,
         offload_mode=args.offload if args.offload is not None else preset.offload_mode,
         sharpen=args.sharpen,
         contrast=args.contrast,
         match_color_input=args.match_color_input,
+        skin_texture_guard=(
+            args.skin_texture_guard
+            if args.skin_texture_guard is not None
+            else preset.skin_texture_guard
+        ),
+        skin_texture_guard_strength=(
+            args.skin_texture_guard_strength
+            if args.skin_texture_guard_strength is not None
+            else preset.skin_texture_guard_strength
+        ),
     )
 
 

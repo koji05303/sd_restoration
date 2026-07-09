@@ -283,6 +283,43 @@ def apply_skin_tone_correction(
     return Image.fromarray(np.clip(corrected, 0.0, 255.0).astype(np.uint8), mode="RGB")
 
 
+def apply_skin_texture_guard(
+    output_tile: Image.Image,
+    reference_tile: Image.Image,
+    skin_mask: np.ndarray,
+    strength: float,
+    detail_radius: float = 2.0,
+    source_detail_scale: float = 0.35,
+) -> Image.Image:
+    if strength <= 0.0:
+        return output_tile
+
+    if reference_tile.size != output_tile.size:
+        reference_tile = reference_tile.resize(output_tile.size, Image.Resampling.LANCZOS)
+
+    mask_image = Image.fromarray((np.clip(skin_mask, 0.0, 1.0) * 255.0).astype(np.uint8), mode="L")
+    if mask_image.size != output_tile.size:
+        mask_image = mask_image.resize(output_tile.size, Image.Resampling.LANCZOS)
+    mask_image = mask_image.filter(ImageFilter.GaussianBlur(radius=2.0))
+
+    output_arr = np.asarray(output_tile.convert("RGB"), dtype=np.float32)
+    reference_arr = np.asarray(reference_tile.convert("RGB"), dtype=np.float32)
+    output_low_arr = np.asarray(
+        output_tile.filter(ImageFilter.GaussianBlur(radius=detail_radius)).convert("RGB"),
+        dtype=np.float32,
+    )
+    reference_low_arr = np.asarray(
+        reference_tile.filter(ImageFilter.GaussianBlur(radius=detail_radius)).convert("RGB"),
+        dtype=np.float32,
+    )
+    mask = (np.asarray(mask_image, dtype=np.float32) / 255.0)[:, :, None] * strength
+
+    reference_detail = reference_arr - reference_low_arr
+    source_consistent_skin = output_low_arr + (reference_detail * source_detail_scale)
+    guarded = (source_consistent_skin * mask) + (output_arr * (1.0 - mask))
+    return Image.fromarray(np.clip(guarded, 0.0, 255.0).astype(np.uint8), mode="RGB")
+
+
 def match_color_to_reference(image: Image.Image, reference: Image.Image) -> Image.Image:
     reference = reference.resize(image.size, Image.Resampling.LANCZOS)
     reference_low = reference.filter(ImageFilter.GaussianBlur(radius=24))
@@ -356,7 +393,9 @@ def enhance_image(
     if config.skin_protect:
         print(
             f"[Info] Skin protect enabled: mode={config.skin_protect_mode}, "
-            f"skin_strength={config.skin_strength}"
+            f"skin_strength={config.skin_strength}, "
+            f"texture_guard={config.skin_texture_guard}, "
+            f"texture_guard_strength={config.skin_texture_guard_strength}"
         )
 
     accumulator = np.zeros((target_height, target_width, 3), dtype=np.float32)
@@ -431,6 +470,7 @@ def enhance_image(
             print(f"[Warning] Near-black {pass_name} tile detected at ({x}, {y}).")
             if config.dtype == torch.float16 and not vae_upgraded:
                 print("[Info] Retrying tile once with FP32 VAE decode...")
+                vae_upgraded = upgrade_vae_decode_precision(pipe)
                 if vae_upgraded:
                     result = run_generation_once(tile_image, tile_seed, strength)
                     output_tile = result.images[0]
@@ -511,6 +551,14 @@ def enhance_image(
                             "skin",
                         )
                         output_tile = blend_skin_tiles(output_tile, skin_tile, skin_mask)
+
+            if skin_mask is not None and skin_coverage > 0.01 and config.skin_texture_guard:
+                output_tile = apply_skin_texture_guard(
+                    output_tile,
+                    tile_image,
+                    skin_mask,
+                    config.skin_texture_guard_strength,
+                )
 
             output_tile_arr = np.asarray(output_tile.convert("RGB"), dtype=np.float32)[:valid_height, :valid_width]
             blend_mask = build_blend_mask(

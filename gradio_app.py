@@ -11,16 +11,15 @@ from typing import Optional
 import gradio as gr
 from PIL import Image
 
-from enhancer import (
+from sd_enhancer.config import (
     DEFAULT_CONTROLNET_ID,
     DEFAULT_MODEL_ID,
     DEFAULT_NEGATIVE_PROMPT,
     DEFAULT_PROMPT,
     EnhanceConfig,
-    SafetyCheckerTriggeredError,
-    enhance_image,
-    resolve_device,
-    resolve_dtype,
+    OFFLOAD_MODES,
+    SKIN_PROTECT_MODES,
+    TILE_SEED_MODES,
 )
 
 
@@ -772,8 +771,18 @@ def run_enhance(
     seed: Optional[float],
     tile_size: int,
     tile_overlap: int,
+    tile_seed_mode: str,
+    skin_protect: bool,
+    skin_protect_mode: str,
+    skin_strength: float,
+    skin_texture_guard: bool,
+    skin_texture_guard_strength: float,
+    sharpen: bool,
+    contrast: bool,
+    match_color_input: bool,
     model_id: str,
     controlnet_id: str,
+    offload_mode: str,
     device: str,
     dtype: str,
     use_xformers: bool,
@@ -800,6 +809,8 @@ def run_enhance(
         progress(0.05, desc="Preparing input image")
         source_image.save(input_path)
 
+        from sd_enhancer.pipeline import enhance_image, resolve_device, resolve_dtype
+
         resolved_device = resolve_device(device)
         resolved_dtype = resolve_dtype(dtype, resolved_device)
 
@@ -824,6 +835,17 @@ def run_enhance(
             overwrite=True,
             tile_size=int(tile_size),
             tile_overlap=int(tile_overlap),
+            tile_seed_mode=tile_seed_mode,
+            preset="gradio",
+            skin_protect=bool(skin_protect),
+            skin_protect_mode=skin_protect_mode,
+            skin_strength=float(skin_strength),
+            offload_mode=offload_mode,
+            sharpen=bool(sharpen),
+            contrast=bool(contrast),
+            match_color_input=bool(match_color_input),
+            skin_texture_guard=bool(skin_texture_guard),
+            skin_texture_guard_strength=float(skin_texture_guard_strength),
         )
 
         progress(0.15, desc="Running enhancement")
@@ -837,17 +859,16 @@ def run_enhance(
         progress(1.0, desc="Done")
         output_logs = logs.getvalue().strip() or "Enhancement finished."
         return output_image, source_image, output_image.copy(), output_logs
-    except SafetyCheckerTriggeredError as exc:
-        output_logs = logs.getvalue().strip()
-        message = (
-            f"Generation blocked by the model safety checker.\n\n{exc}\n\n"
-            "Try a different prompt or a different checkpoint, then run again."
-        )
-        if output_logs:
-            message = f"{message}\n\nLogs:\n{output_logs}"
-        return None, source_image, None, message
     except Exception as exc:
         output_logs = logs.getvalue().strip()
+        if exc.__class__.__name__ == "SafetyCheckerTriggeredError":
+            message = (
+                f"Generation blocked by the model safety checker.\n\n{exc}\n\n"
+                "Try a different prompt or a different checkpoint, then run again."
+            )
+            if output_logs:
+                message = f"{message}\n\nLogs:\n{output_logs}"
+            return None, source_image, None, message
         if output_logs:
             return None, source_image, None, f"Error: {exc}\n\nLogs:\n{output_logs}"
         return None, source_image, None, f"Error: {exc}"
@@ -891,8 +912,8 @@ def build_ui() -> gr.Blocks:
                     </p>
                     <ul class="note-list">
                       <li>Use smaller tile sizes when memory is tight.</li>
-                      <li>Keep overlap around 48-80 for smoother seams.</li>
-                      <li>Switch to fp32 only when a specific image needs it.</li>
+                      <li>Keep overlap around 128-192 for smoother skin and tile transitions.</li>
+                      <li>Use the skin guard when faces or arms show blotchy generated detail.</li>
                     </ul>
                   </aside>
                 </section>
@@ -954,21 +975,21 @@ def build_ui() -> gr.Blocks:
                                 strength = gr.Slider(
                                     minimum=0.0,
                                     maximum=1.0,
-                                    value=0.35,
+                                    value=0.25,
                                     step=0.01,
                                     label="Strength",
                                 )
                                 conditioning_scale = gr.Slider(
                                     minimum=0.1,
                                     maximum=2.0,
-                                    value=1.0,
+                                    value=1.3,
                                     step=0.05,
                                     label="ControlNet Conditioning Scale",
                                 )
                                 guidance_scale = gr.Slider(
                                     minimum=1.0,
                                     maximum=15.0,
-                                    value=7.5,
+                                    value=5.5,
                                     step=0.5,
                                     label="Guidance Scale",
                                 )
@@ -980,6 +1001,52 @@ def build_ui() -> gr.Blocks:
                                     label="Inference Steps",
                                 )
                                 seed = gr.Number(label="Seed (optional)", precision=0, value=None)
+
+                            with gr.Group(elem_classes="section-card"):
+                                gr.Markdown("### Skin & Finish", elem_classes="section-heading")
+                                gr.Markdown(
+                                    "Reduce unstable skin texture while keeping the broader restoration pass intact.",
+                                    elem_classes="section-kicker",
+                                )
+                                skin_protect = gr.Checkbox(
+                                    value=True,
+                                    label="Skin Protect",
+                                )
+                                skin_protect_mode = gr.Dropdown(
+                                    choices=list(SKIN_PROTECT_MODES),
+                                    value="tone",
+                                    label="Skin Protect Mode",
+                                )
+                                skin_strength = gr.Slider(
+                                    minimum=0.0,
+                                    maximum=1.0,
+                                    value=0.16,
+                                    step=0.01,
+                                    label="Skin Strength",
+                                )
+                                skin_texture_guard = gr.Checkbox(
+                                    value=True,
+                                    label="Skin Texture Guard",
+                                )
+                                skin_texture_guard_strength = gr.Slider(
+                                    minimum=0.0,
+                                    maximum=1.0,
+                                    value=0.65,
+                                    step=0.01,
+                                    label="Skin Texture Guard Strength",
+                                )
+                                sharpen = gr.Checkbox(
+                                    value=False,
+                                    label="Sharpen",
+                                )
+                                contrast = gr.Checkbox(
+                                    value=False,
+                                    label="Contrast",
+                                )
+                                match_color_input = gr.Checkbox(
+                                    value=False,
+                                    label="Match Color To Input",
+                                )
 
                         with gr.Column():
                             with gr.Group(elem_classes="section-card"):
@@ -998,12 +1065,22 @@ def build_ui() -> gr.Blocks:
                                 tile_overlap = gr.Slider(
                                     minimum=0,
                                     maximum=256,
-                                    value=64,
+                                    value=128,
                                     step=8,
                                     label="Tile Overlap",
                                 )
+                                tile_seed_mode = gr.Dropdown(
+                                    choices=list(TILE_SEED_MODES),
+                                    value="same",
+                                    label="Tile Seed Mode",
+                                )
                                 model_id = gr.Textbox(label="Model ID", value=DEFAULT_MODEL_ID)
                                 controlnet_id = gr.Textbox(label="ControlNet ID", value=DEFAULT_CONTROLNET_ID)
+                                offload_mode = gr.Dropdown(
+                                    choices=list(OFFLOAD_MODES),
+                                    value="none",
+                                    label="CPU Offload",
+                                )
                                 device = gr.Dropdown(
                                     choices=["auto", "cuda", "cpu"],
                                     value="auto",
@@ -1097,8 +1174,18 @@ def build_ui() -> gr.Blocks:
                 seed,
                 tile_size,
                 tile_overlap,
+                tile_seed_mode,
+                skin_protect,
+                skin_protect_mode,
+                skin_strength,
+                skin_texture_guard,
+                skin_texture_guard_strength,
+                sharpen,
+                contrast,
+                match_color_input,
                 model_id,
                 controlnet_id,
+                offload_mode,
                 device,
                 dtype,
                 use_xformers,

@@ -79,6 +79,9 @@ class EnhanceConfig:
     sharpen: bool
     contrast: bool
     match_color_input: bool
+    skin_texture_guard: bool = True
+    skin_texture_guard_strength: float = 0.65
+
 
 def print_config(config: EnhanceConfig) -> None:
     print("[DEBUG] EnhanceConfig:")
