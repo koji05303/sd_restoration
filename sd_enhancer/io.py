@@ -101,6 +101,7 @@ def write_metadata_sidecar(
         "steps": config.steps,
         "tile_size": config.tile_size,
         "tile_overlap": config.tile_overlap,
+        "tile_batch_size": config.tile_batch_size,
         "upscale_factor": config.upscale_factor,
         "skin_protect": config.skin_protect,
         "skin_protect_mode": config.skin_protect_mode,

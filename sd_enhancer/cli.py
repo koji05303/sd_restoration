@@ -235,6 +235,12 @@ def create_parser() -> argparse.ArgumentParser:
         help="How tile seeds are derived from --seed.",
     )
     generation_group.add_argument(
+        "--tile-batch-size",
+        type=positive_int,
+        default=None,
+        help="Number of equal-parameter tiles to send through ControlNet/UNet in one batch.",
+    )
+    generation_group.add_argument(
         "--skin-protect",
         action=argparse.BooleanOptionalAction,
         default=None,
@@ -401,6 +407,7 @@ def build_config(args: argparse.Namespace, image_path: Path, output_path: Path) 
         tile_size=value_or_preset(args, preset, "tile_size"),
         tile_overlap=value_or_preset(args, preset, "tile_overlap"),
         tile_seed_mode=value_or_preset(args, preset, "tile_seed_mode"),
+        tile_batch_size=value_or_preset(args, preset, "tile_batch_size"),
         preset=args.preset,
         skin_protect=value_or_preset(args, preset, "skin_protect"),
         skin_protect_mode=value_or_preset(args, preset, "skin_protect_mode"),

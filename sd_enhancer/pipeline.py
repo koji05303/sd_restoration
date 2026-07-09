@@ -1,6 +1,7 @@
 import logging
 import random
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -15,10 +16,38 @@ from .tiling import build_blend_mask, compute_tile_starts, round_up_to_multiple
 
 
 logger = logging.getLogger(__name__)
+BATCH_PARAMETER_PRECISION = 2
 
 
 class SafetyCheckerTriggeredError(RuntimeError):
     pass
+
+
+@dataclass
+class TileJob:
+    index: int
+    x: int
+    y: int
+    right: int
+    bottom: int
+    valid_width: int
+    valid_height: int
+    tile_image: Image.Image
+    tile_seed: Optional[int]
+    skin_mask: Optional[np.ndarray]
+    skin_coverage: float
+    strength: float
+    conditioning_scale: float
+    guidance_scale: float
+
+
+@dataclass
+class GenerationRequest:
+    job: TileJob
+    pass_name: str
+    strength: float
+    conditioning_scale: float
+    guidance_scale: float
 
 
 def resolve_device(device_choice: str) -> str:
@@ -224,6 +253,21 @@ def make_generator(config: EnhanceConfig, tile_seed: Optional[int]) -> Optional[
         return None
     generator_device = "cpu" if config.offload_mode != "none" else config.device
     return torch.Generator(device=generator_device).manual_seed(tile_seed)
+
+
+def generation_parameter_key(request: GenerationRequest) -> tuple[str, float, float, float]:
+    return (
+        request.pass_name,
+        round(float(request.strength), BATCH_PARAMETER_PRECISION),
+        round(float(request.conditioning_scale), BATCH_PARAMETER_PRECISION),
+        round(float(request.guidance_scale), BATCH_PARAMETER_PRECISION),
+    )
+
+
+def is_cuda_out_of_memory_error(exc: BaseException) -> bool:
+    if isinstance(exc, torch.cuda.OutOfMemoryError):
+        return True
+    return isinstance(exc, RuntimeError) and "out of memory" in str(exc).lower()
 
 
 def skin_parameter_mix(skin_coverage: float, start: float = 0.01, full: float = 0.75) -> float:
@@ -455,12 +499,13 @@ def enhance_image(
     total_tiles = len(x_starts) * len(y_starts)
 
     logger.info(
-        "Tiled inference: tile=%dx%d, overlap=%dx%d, total_tiles=%d",
+        "Tiled inference: tile=%dx%d, overlap=%dx%d, total_tiles=%d, tile_batch_size=%d",
         tile_width,
         tile_height,
         overlap_x,
         overlap_y,
         total_tiles,
+        config.tile_batch_size,
     )
 
     if config.seed is not None:
@@ -510,82 +555,209 @@ def enhance_image(
             sys.stdout.flush()
             progress_line_length = 0
 
-    def run_generation_once(
-        tile_image: Image.Image,
-        tile_seed: Optional[int],
+    def run_generation_batch_once(
+        requests: list[GenerationRequest],
         strength: float,
         conditioning_scale: float,
         guidance_scale: float,
     ):
-        generator = make_generator(config, tile_seed)
+        images = [request.job.tile_image for request in requests]
+        prompts = [config.prompt] * len(requests)
+        negative_prompts = [config.negative_prompt] * len(requests)
+        generators = None
+        if any(request.job.tile_seed is not None for request in requests):
+            generators = [make_generator(config, request.job.tile_seed) for request in requests]
 
         with torch.inference_mode():
             return pipe(
-                prompt=config.prompt,
-                negative_prompt=config.negative_prompt,
-                image=tile_image,
-                control_image=tile_image,
+                prompt=prompts,
+                negative_prompt=negative_prompts,
+                image=images,
+                control_image=images,
                 controlnet_conditioning_scale=conditioning_scale,
                 strength=strength,
                 num_inference_steps=config.steps,
                 guidance_scale=guidance_scale,
-                generator=generator,
+                generator=generators,
             )
 
-    def generate_tile_checked(
-        tile_image: Image.Image,
-        tile_seed: Optional[int],
-        x: int,
-        y: int,
+    def generate_batch_checked(
+        requests: list[GenerationRequest],
         strength: float,
         conditioning_scale: float,
         guidance_scale: float,
-        pass_name: str,
-    ) -> Image.Image:
+    ) -> list[Image.Image]:
         nonlocal vae_upgraded
 
-        result = run_generation_once(tile_image, tile_seed, strength, conditioning_scale, guidance_scale)
-        output_tile = result.images[0]
+        result = run_generation_batch_once(requests, strength, conditioning_scale, guidance_scale)
+        output_tiles = list(result.images)
         nsfw_flags = getattr(result, "nsfw_content_detected", None)
 
-        if nsfw_flags and any(flag is True for flag in nsfw_flags):
+        if len(output_tiles) != len(requests):
             clear_progress_line()
-            raise SafetyCheckerTriggeredError(
-                f"Safety checker triggered during {pass_name} pass at tile ({x}, {y})."
-            )
+            raise RuntimeError(f"Pipeline returned {len(output_tiles)} image(s) for {len(requests)} tile request(s).")
 
-        if is_near_black_image(output_tile):
+        if nsfw_flags:
+            for request, flag in zip(requests, nsfw_flags):
+                if flag is True:
+                    clear_progress_line()
+                    raise SafetyCheckerTriggeredError(
+                        (
+                            f"Safety checker triggered during {request.pass_name} pass "
+                            f"at tile ({request.job.x}, {request.job.y})."
+                        )
+                    )
+
+        near_black_indexes = [
+            index
+            for index, output_tile in enumerate(output_tiles)
+            if is_near_black_image(output_tile)
+        ]
+        if near_black_indexes:
+            first_request = requests[near_black_indexes[0]]
             clear_progress_line()
-            logger.warning("Near-black %s tile detected at (%d, %d).", pass_name, x, y)
+            logger.warning(
+                "Near-black %s tile detected at (%d, %d).",
+                first_request.pass_name,
+                first_request.job.x,
+                first_request.job.y,
+            )
             if config.dtype == torch.float16 and not vae_upgraded:
-                logger.info("Retrying tile once with FP32 VAE decode...")
+                logger.info("Retrying batch once with FP32 VAE decode...")
                 vae_upgraded = upgrade_vae_decode_precision(pipe)
                 if vae_upgraded:
-                    result = run_generation_once(tile_image, tile_seed, strength, conditioning_scale, guidance_scale)
-                    output_tile = result.images[0]
+                    result = run_generation_batch_once(requests, strength, conditioning_scale, guidance_scale)
+                    output_tiles = list(result.images)
                     nsfw_flags = getattr(result, "nsfw_content_detected", None)
 
-        if nsfw_flags and any(flag is True for flag in nsfw_flags):
+        if nsfw_flags:
+            for request, flag in zip(requests, nsfw_flags):
+                if flag is True:
+                    clear_progress_line()
+                    raise SafetyCheckerTriggeredError(
+                        (
+                            f"Safety checker triggered during {request.pass_name} retry "
+                            f"at tile ({request.job.x}, {request.job.y})."
+                        )
+                    )
+
+        for request, output_tile in zip(requests, output_tiles):
+            if is_near_black_image(output_tile):
+                clear_progress_line()
+                raise RuntimeError(
+                    (
+                        f"Near-black {request.pass_name} tile detected at tile "
+                        f"({request.job.x}, {request.job.y}). "
+                        "Try --dtype fp32, --offload sequential, lower --guidance-scale, "
+                        "or reduce --strength."
+                    )
+                )
+
+        checked_tiles = []
+        for request, output_tile in zip(requests, output_tiles):
+            if output_tile.size != request.job.tile_image.size:
+                output_tile = output_tile.resize(request.job.tile_image.size, Image.Resampling.LANCZOS)
+            checked_tiles.append(output_tile)
+
+        return checked_tiles
+
+    def execute_request_batch(
+        requests: list[GenerationRequest],
+        strength: float,
+        conditioning_scale: float,
+        guidance_scale: float,
+        allow_single_retry: bool = True,
+    ) -> list[Image.Image]:
+        try:
+            return generate_batch_checked(requests, strength, conditioning_scale, guidance_scale)
+        except RuntimeError as exc:
+            if not is_cuda_out_of_memory_error(exc):
+                raise
+
             clear_progress_line()
-            raise SafetyCheckerTriggeredError(
-                f"Safety checker triggered during {pass_name} retry at tile ({x}, {y})."
-            )
+            if config.device == "cuda":
+                torch.cuda.empty_cache()
 
-        if is_near_black_image(output_tile):
-            clear_progress_line()
-            raise RuntimeError(
-                f"Near-black {pass_name} tile detected at tile ({x}, {y}). "
-                "Try --dtype fp32, --offload sequential, lower --guidance-scale, "
-                "or reduce --strength."
-            )
+            if len(requests) > 1:
+                logger.warning(
+                    "CUDA out of memory for tile batch size %d; splitting batch and retrying.",
+                    len(requests),
+                )
+                midpoint = len(requests) // 2
+                return execute_request_batch(
+                    requests[:midpoint],
+                    strength,
+                    conditioning_scale,
+                    guidance_scale,
+                    allow_single_retry,
+                ) + execute_request_batch(
+                    requests[midpoint:],
+                    strength,
+                    conditioning_scale,
+                    guidance_scale,
+                    allow_single_retry,
+                )
 
-        if output_tile.size != tile_image.size:
-            output_tile = output_tile.resize(tile_image.size, Image.Resampling.LANCZOS)
+            if allow_single_retry:
+                request = requests[0]
+                logger.warning(
+                    "CUDA out of memory for single %s tile at (%d, %d); cleared cache and retrying once.",
+                    request.pass_name,
+                    request.job.x,
+                    request.job.y,
+                )
+                return execute_request_batch(
+                    requests,
+                    strength,
+                    conditioning_scale,
+                    guidance_scale,
+                    allow_single_retry=False,
+                )
 
-        return output_tile
+            raise
 
+    def process_generation_requests(
+        requests: list[GenerationRequest],
+        label: str,
+    ) -> dict[int, Image.Image]:
+        if not requests:
+            return {}
+
+        groups: dict[tuple[str, float, float, float], list[GenerationRequest]] = {}
+        for request in requests:
+            groups.setdefault(generation_parameter_key(request), []).append(request)
+
+        batch_size = max(1, int(config.tile_batch_size))
+        logger.info(
+            "%s generation: %d tile(s), parameter_groups=%d, tile_batch_size=%d",
+            label.capitalize(),
+            len(requests),
+            len(groups),
+            batch_size,
+        )
+
+        outputs: dict[int, Image.Image] = {}
+        completed = 0
+        for key, group in groups.items():
+            _, strength, conditioning_scale, guidance_scale = key
+            for start in range(0, len(group), batch_size):
+                batch = group[start:start + batch_size]
+                batch_outputs = execute_request_batch(batch, strength, conditioning_scale, guidance_scale)
+                for request, output_tile in zip(batch, batch_outputs):
+                    outputs[request.job.index] = output_tile
+                completed += len(batch)
+                write_progress(
+                    f"[{label.capitalize()} batch {completed}/{len(requests)}] "
+                    f"size={len(batch)} strength={strength:.2f} cfg={guidance_scale:.2f}"
+                )
+
+        clear_progress_line()
+        return outputs
+
+    tile_jobs: list[TileJob] = []
+    normal_requests: list[GenerationRequest] = []
+    skin_requests: list[GenerationRequest] = []
     tile_counter = 0
-
     for y in y_starts:
         for x in x_starts:
             tile_counter += 1
@@ -632,80 +804,97 @@ def enhance_image(
                     tile_guidance_scale,
                 )
 
+            job = TileJob(
+                index=tile_counter,
+                x=x,
+                y=y,
+                right=right,
+                bottom=bottom,
+                valid_width=valid_width,
+                valid_height=valid_height,
+                tile_image=tile_image,
+                tile_seed=tile_seed,
+                skin_mask=skin_mask,
+                skin_coverage=skin_coverage,
+                strength=tile_strength,
+                conditioning_scale=tile_conditioning_scale,
+                guidance_scale=tile_guidance_scale,
+            )
+            tile_jobs.append(job)
+
             if (
                 skin_mask is not None
                 and config.skin_protect_mode == "dual-pass"
                 and skin_coverage >= 0.98
             ):
-                output_tile = generate_tile_checked(
-                    tile_image,
-                    tile_seed,
-                    x,
-                    y,
+                skin_requests.append(GenerationRequest(
+                    job,
+                    "skin",
                     config.skin_strength,
                     config.skin_conditioning_scale,
                     config.skin_guidance_scale,
-                    "skin",
-                )
+                ))
             else:
-                output_tile = generate_tile_checked(
-                    tile_image,
-                    tile_seed,
-                    x,
-                    y,
+                normal_requests.append(GenerationRequest(
+                    job,
+                    "normal",
                     tile_strength,
                     tile_conditioning_scale,
                     tile_guidance_scale,
-                    "normal",
-                )
+                ))
 
-                if skin_mask is not None and skin_coverage > 0.01:
-                    if config.skin_protect_mode == "tone":
-                        output_tile = apply_skin_tone_correction(output_tile, tile_image, skin_mask)
-                    else:
-                        skin_tile = generate_tile_checked(
-                            tile_image,
-                            tile_seed,
-                            x,
-                            y,
-                            config.skin_strength,
-                            config.skin_conditioning_scale,
-                            config.skin_guidance_scale,
-                            "skin",
-                        )
-                        output_tile = blend_skin_tiles(output_tile, skin_tile, skin_mask)
+                if skin_mask is not None and skin_coverage > 0.01 and config.skin_protect_mode == "dual-pass":
+                    skin_requests.append(GenerationRequest(
+                        job,
+                        "skin",
+                        config.skin_strength,
+                        config.skin_conditioning_scale,
+                        config.skin_guidance_scale,
+                    ))
 
-            if skin_mask is not None and skin_coverage > 0.01 and config.skin_texture_guard:
-                output_tile = apply_skin_texture_guard(
-                    output_tile,
-                    tile_image,
-                    skin_mask,
-                    config.skin_texture_guard_strength,
-                )
+    normal_outputs = process_generation_requests(normal_requests, "normal")
+    skin_outputs = process_generation_requests(skin_requests, "skin")
 
-            output_tile_arr = np.asarray(output_tile.convert("RGB"), dtype=np.float32)[:valid_height, :valid_width]
-            blend_mask = build_blend_mask(
-                valid_width,
-                valid_height,
-                overlap_x,
-                overlap_y,
-                has_left=(x > 0),
-                has_right=(right < target_width),
-                has_top=(y > 0),
-                has_bottom=(bottom < target_height),
+    for tile_counter, job in enumerate(tile_jobs, start=1):
+        if job.index in normal_outputs:
+            output_tile = normal_outputs[job.index]
+            if job.skin_mask is not None and job.skin_coverage > 0.01:
+                if config.skin_protect_mode == "tone":
+                    output_tile = apply_skin_tone_correction(output_tile, job.tile_image, job.skin_mask)
+                else:
+                    skin_tile = skin_outputs[job.index]
+                    output_tile = blend_skin_tiles(output_tile, skin_tile, job.skin_mask)
+        else:
+            output_tile = skin_outputs[job.index]
+
+        if job.skin_mask is not None and job.skin_coverage > 0.01 and config.skin_texture_guard:
+            output_tile = apply_skin_texture_guard(
+                output_tile,
+                job.tile_image,
+                job.skin_mask,
+                config.skin_texture_guard_strength,
             )
 
-            accumulator[y:bottom, x:right, :] += output_tile_arr * blend_mask[:, :, None]
-            weights[y:bottom, x:right] += blend_mask
+        output_tile_arr = np.asarray(output_tile.convert("RGB"), dtype=np.float32)[:job.valid_height, :job.valid_width]
+        blend_mask = build_blend_mask(
+            job.valid_width,
+            job.valid_height,
+            overlap_x,
+            overlap_y,
+            has_left=(job.x > 0),
+            has_right=(job.right < target_width),
+            has_top=(job.y > 0),
+            has_bottom=(job.bottom < target_height),
+        )
 
-            progress_percent = tile_counter / total_tiles * 100.0
-            write_progress(
-                f"[Tile {tile_counter}/{total_tiles} | {progress_percent:5.1f}%] "
-                f"Completed at ({x}, {y})"
-            )
+        accumulator[job.y:job.bottom, job.x:job.right, :] += output_tile_arr * blend_mask[:, :, None]
+        weights[job.y:job.bottom, job.x:job.right] += blend_mask
 
-            if config.device == "cuda":
-                torch.cuda.empty_cache()
+        progress_percent = tile_counter / total_tiles * 100.0
+        write_progress(
+            f"[Tile {tile_counter}/{total_tiles} | {progress_percent:5.1f}%] "
+            f"Composited at ({job.x}, {job.y})"
+        )
 
     finish_progress_line()
 

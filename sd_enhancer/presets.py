@@ -17,6 +17,7 @@ class EnhancementPreset:
     tile_size: int = 512
     tile_overlap: int = 128
     tile_seed_mode: str = "same"
+    tile_batch_size: int = 2
     skin_protect: bool = True
     skin_protect_mode: str = "tone"
     skin_strength: float = 0.16
@@ -140,6 +141,7 @@ LOW_VRAM_PRESET = EnhancementPreset(
     guidance_scale=4.2,
     steps=20,
     tile_size=384,
+    tile_batch_size=1,
     skin_tile_size=None,
     offload_mode="sequential",
 )

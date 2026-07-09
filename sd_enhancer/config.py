@@ -71,6 +71,7 @@ class EnhanceConfig:
     tile_size: int
     tile_overlap: int
     tile_seed_mode: str
+    tile_batch_size: int
     preset: str
     skin_protect: bool
     skin_protect_mode: str

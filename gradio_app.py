@@ -22,6 +22,7 @@ from sd_enhancer.config import (
     SKIN_PROTECT_MODES,
     TILE_SEED_MODES,
 )
+from sd_enhancer.presets import PRESETS, get_preset
 
 
 APP_CSS = """
@@ -87,13 +88,12 @@ body, .gradio-container {
     position: relative;
     z-index: 1;
     display: grid;
-    grid-template-columns: minmax(0, 1.55fr) minmax(280px, 0.95fr);
-    gap: 18px;
-    padding: 10px 6px 20px;
+    grid-template-columns: 1fr;
+    gap: 0;
+    padding: 6px 6px 16px;
 }
 
 .hero-card,
-.hero-note,
 .section-card {
     border: 1px solid var(--line);
     border-radius: 28px;
@@ -103,100 +103,16 @@ body, .gradio-container {
 }
 
 .hero-card {
-    padding: 28px 30px;
-}
-
-.hero-note {
-    padding: 24px;
-}
-
-.eyebrow {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    padding: 8px 12px;
-    border-radius: 999px;
-    background: rgba(255, 255, 255, 0.04);
-    color: var(--accent-deep);
-    font-size: 0.82rem;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-}
-
-.eyebrow::before {
-    content: "";
-    width: 8px;
-    height: 8px;
-    border-radius: 999px;
-    background: linear-gradient(180deg, #f0b66c, #b56d24);
-    box-shadow: 0 0 0 6px rgba(215, 154, 81, 0.14);
+    padding: 22px 24px;
 }
 
 .hero-title {
-    margin: 18px 0 14px;
+    margin: 0;
     font-family: 'Fraunces', Georgia, serif;
-    font-size: clamp(2.5rem, 5vw, 4.8rem);
-    line-height: 0.95;
+    font-size: clamp(2.1rem, 4vw, 3.4rem);
+    line-height: 1;
     letter-spacing: -0.04em;
     color: #fff0dc;
-}
-
-.hero-copy {
-    max-width: 720px;
-    margin: 0;
-    color: var(--muted);
-    font-size: 1.05rem;
-    line-height: 1.75;
-}
-
-.metric-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
-    margin-top: 22px;
-}
-
-.metric-card {
-    padding: 14px 16px;
-    border-radius: 22px;
-    background: var(--panel-strong);
-    border: 1px solid rgba(235, 214, 185, 0.08);
-}
-
-.metric-label {
-    color: var(--muted);
-    font-size: 0.75rem;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-}
-
-.metric-value {
-    margin-top: 8px;
-    font-family: 'Fraunces', Georgia, serif;
-    font-size: 1.38rem;
-    line-height: 1.05;
-    color: #ffe7c7;
-}
-
-.note-title {
-    margin: 0 0 10px;
-    font-family: 'Fraunces', Georgia, serif;
-    font-size: 1.55rem;
-    color: #ffe7c7;
-}
-
-.note-copy,
-.note-list {
-    color: var(--muted);
-    font-size: 0.96rem;
-    line-height: 1.7;
-}
-
-.note-list {
-    margin: 14px 0 0;
-    padding-left: 18px;
 }
 
 .workspace-grid {
@@ -403,33 +319,6 @@ body, .gradio-container {
     object-fit: contain;
 }
 
-.tip-grid {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    gap: 12px;
-}
-
-.tip-card {
-    padding: 16px;
-    border-radius: 20px;
-    background: var(--panel-strong);
-    border: 1px solid rgba(235, 214, 185, 0.08);
-}
-
-.tip-card h4 {
-    margin: 0 0 8px;
-    font-family: 'Fraunces', Georgia, serif;
-    font-size: 1.1rem;
-    color: #ffe4bf;
-}
-
-.tip-card p {
-    margin: 0;
-    color: var(--muted);
-    font-size: 0.9rem;
-    line-height: 1.65;
-}
-
 #enhance-button {
     min-height: 64px;
     border: 0 !important;
@@ -445,31 +334,6 @@ body, .gradio-container {
 #enhance-button:hover {
     filter: brightness(1.03);
     transform: translateY(-1px);
-}
-
-.micro-copy {
-    margin: 10px 2px 0;
-    color: var(--muted);
-    font-size: 0.88rem;
-    line-height: 1.7;
-}
-
-.status-banner {
-    padding: 14px 16px;
-    border-radius: 18px;
-    background: var(--panel-strong);
-    border: 1px solid rgba(235, 214, 185, 0.08);
-    color: #d8c7b2;
-    font-size: 0.92rem;
-    line-height: 1.65;
-}
-
-.footer-note {
-    margin-top: 16px;
-    padding: 14px 18px 0;
-    color: var(--muted);
-    font-size: 0.83rem;
-    letter-spacing: 0.02em;
 }
 
 .gradio-container footer {
@@ -508,9 +372,9 @@ body, .gradio-container {
     }
 
     .hero-panel {
-        grid-template-columns: minmax(0, 1.72fr) minmax(360px, 0.92fr);
-        gap: 24px;
-        padding: 14px 10px 28px;
+        grid-template-columns: 1fr;
+        gap: 0;
+        padding: 10px 10px 22px;
     }
 
     .workspace-grid,
@@ -523,27 +387,12 @@ body, .gradio-container {
         padding: 34px 36px;
     }
 
-    .hero-note,
     .section-card {
         padding: 24px;
     }
 
     .hero-title {
-        font-size: clamp(3.2rem, 4vw, 5.4rem);
-    }
-
-    .hero-copy {
-        max-width: 60ch;
-        font-size: 1.08rem;
-    }
-
-    .metric-grid {
-        gap: 14px;
-    }
-
-    .metric-card,
-    .tip-card {
-        padding: 18px;
+        font-size: clamp(2.5rem, 4vw, 3.8rem);
     }
 
     .workspace-grid > .column:first-child {
@@ -590,29 +439,17 @@ body, .gradio-container {
         font-size: clamp(2.35rem, 6vw, 4.1rem);
     }
 
-    .hero-copy,
-    .note-copy,
-    .note-list,
     .section-kicker {
         max-width: 100%;
     }
 }
 
 @media (max-width: 900px) {
-    .metric-grid {
-        grid-template-columns: 1fr;
-    }
-
-    .tip-grid {
-        grid-template-columns: 1fr;
-    }
-
     .compare-grid {
         flex-direction: column !important;
     }
 
     .hero-card,
-    .hero-note,
     .section-card {
         border-radius: 24px;
     }
@@ -621,7 +458,6 @@ body, .gradio-container {
         padding: 22px;
     }
 
-    .hero-note,
     .section-card {
         padding: 18px;
     }
@@ -629,10 +465,6 @@ body, .gradio-container {
     .hero-title {
         font-size: clamp(2.1rem, 8vw, 3.2rem);
         line-height: 0.98;
-    }
-
-    .metric-value {
-        font-size: 1.2rem;
     }
 
     .lux-image,
@@ -658,7 +490,6 @@ body, .gradio-container {
     }
 
     .hero-card,
-    .hero-note,
     .section-card {
         border-radius: 18px;
         padding: 14px;
@@ -668,25 +499,9 @@ body, .gradio-container {
         font-size: 1.95rem;
     }
 
-    .hero-copy,
-    .section-kicker,
-    .note-copy,
-    .note-list,
-    .micro-copy,
-    .status-banner {
+    .section-kicker {
         font-size: 0.9rem;
         line-height: 1.6;
-    }
-
-    .eyebrow {
-        padding: 7px 10px;
-        font-size: 0.76rem;
-    }
-
-    .metric-card,
-    .tip-card {
-        padding: 14px;
-        border-radius: 16px;
     }
 
     .lux-text textarea,
@@ -760,8 +575,38 @@ def build_theme() -> gr.Theme:
     )
 
 
+def preset_to_ui_values(preset_name: str):
+    preset = get_preset(preset_name)
+    skin_tile_size = preset.skin_tile_size if preset.skin_tile_size is not None else preset.tile_size
+    return (
+        preset.prompt,
+        preset.negative_prompt,
+        preset.upscale_factor,
+        preset.strength,
+        preset.conditioning_scale,
+        preset.guidance_scale,
+        preset.steps,
+        preset.tile_size,
+        preset.tile_overlap,
+        preset.tile_seed_mode,
+        preset.tile_batch_size,
+        preset.skin_protect,
+        preset.skin_protect_mode,
+        preset.skin_strength,
+        preset.skin_guidance_scale,
+        preset.skin_conditioning_scale,
+        skin_tile_size,
+        preset.skin_texture_guard,
+        preset.skin_texture_guard_strength,
+        preset.model_id,
+        preset.controlnet_id,
+        preset.offload_mode,
+    )
+
+
 def run_enhance(
     image: Optional[Image.Image],
+    preset_name: str,
     prompt: str,
     negative_prompt: str,
     upscale_factor: float,
@@ -773,6 +618,7 @@ def run_enhance(
     tile_size: int,
     tile_overlap: int,
     tile_seed_mode: str,
+    tile_batch_size: int,
     skin_protect: bool,
     skin_protect_mode: str,
     skin_strength: float,
@@ -801,6 +647,9 @@ def run_enhance(
     if tile_size % 8 != 0:
         return None, None, None, "Error: tile_size must be a multiple of 8."
 
+    if int(tile_batch_size) <= 0:
+        return None, None, None, "Error: tile_batch_size must be a positive integer."
+
     if int(skin_tile_size) % 8 != 0:
         return None, None, None, "Error: skin_tile_size must be a multiple of 8."
 
@@ -828,16 +677,17 @@ def run_enhance(
 
         resolved_device = resolve_device(device)
         resolved_dtype = resolve_dtype(dtype, resolved_device)
+        preset = get_preset(preset_name)
 
         config = EnhanceConfig(
             image_path=input_path,
             output_path=output_path,
-            prompt=prompt.strip() if prompt.strip() else DEFAULT_PROMPT,
+            prompt=prompt.strip() if prompt.strip() else preset.prompt,
             negative_prompt=(
-                negative_prompt.strip() if negative_prompt.strip() else DEFAULT_NEGATIVE_PROMPT
+                negative_prompt.strip() if negative_prompt.strip() else preset.negative_prompt
             ),
-            model_id=model_id.strip() if model_id.strip() else DEFAULT_MODEL_ID,
-            controlnet_id=controlnet_id.strip() if controlnet_id.strip() else DEFAULT_CONTROLNET_ID,
+            model_id=model_id.strip() if model_id.strip() else preset.model_id,
+            controlnet_id=controlnet_id.strip() if controlnet_id.strip() else preset.controlnet_id,
             upscale_factor=float(upscale_factor),
             strength=float(strength),
             conditioning_scale=float(conditioning_scale),
@@ -851,7 +701,8 @@ def run_enhance(
             tile_size=int(tile_size),
             tile_overlap=int(tile_overlap),
             tile_seed_mode=tile_seed_mode,
-            preset="gradio",
+            tile_batch_size=int(tile_batch_size),
+            preset=preset_name,
             skin_protect=bool(skin_protect),
             skin_protect_mode=skin_protect_mode,
             skin_strength=float(skin_strength),
@@ -905,39 +756,8 @@ def build_ui() -> gr.Blocks:
                 """
                 <section class="hero-panel">
                   <div class="hero-card">
-                    <span class="eyebrow">Premium Restoration Suite</span>
                     <h1 class="hero-title">Lustre Restore Studio</h1>
-                    <p class="hero-copy">
-                      Tile-aware image enhancement with a more refined presentation layer. Upload a frame,
-                      dial in the aesthetic, and render a cleaner upscale pass without the usual tool-room feel.
-                    </p>
-                    <div class="metric-grid">
-                      <div class="metric-card">
-                        <div class="metric-label">Render Mode</div>
-                        <div class="metric-value">Tiled Precision</div>
-                      </div>
-                      <div class="metric-card">
-                        <div class="metric-label">Output Style</div>
-                        <div class="metric-value">Photo Finish</div>
-                      </div>
-                      <div class="metric-card">
-                        <div class="metric-label">Runtime Guardrails</div>
-                        <div class="metric-value">VRAM Aware</div>
-                      </div>
-                    </div>
                   </div>
-                  <aside class="hero-note">
-                    <h3 class="note-title">Studio Notes</h3>
-                    <p class="note-copy">
-                      The interface is tuned to feel more like a boutique rendering product: warmer palette,
-                      stronger typography, clearer hierarchy, and calmer parameter grouping.
-                    </p>
-                    <ul class="note-list">
-                      <li>Use smaller tile sizes when memory is tight.</li>
-                      <li>Keep overlap around 128-192 for smoother skin and tile transitions.</li>
-                      <li>Use the skin guard when faces or arms show blotchy generated detail.</li>
-                    </ul>
-                  </aside>
                 </section>
                 """
             )
@@ -946,9 +766,10 @@ def build_ui() -> gr.Blocks:
                 with gr.Column(scale=11, elem_classes="pane-stack"):
                     with gr.Group(elem_classes="section-card"):
                         gr.Markdown("### Source Frame", elem_classes="section-heading")
-                        gr.Markdown(
-                            "Upload the image you want to restore. The engine will resize, tile, and blend it into a single polished output.",
-                            elem_classes="section-kicker",
+                        preset_name = gr.Dropdown(
+                            choices=sorted(PRESETS),
+                            value="photo",
+                            label="Preset",
                         )
                         input_image = gr.Image(
                             type="pil",
@@ -957,20 +778,13 @@ def build_ui() -> gr.Blocks:
                             elem_classes="lux-image",
                         )
                         run_button = gr.Button(
-                            "Render Premium Pass",
+                            "Run Enhancement",
                             variant="primary",
                             elem_id="enhance-button",
-                        )
-                        gr.HTML(
-                            "<p class='micro-copy'>Best results usually come from clean source frames, moderate guidance, and a tile size that matches your available VRAM.</p>"
                         )
 
                     with gr.Group(elem_classes="section-card"):
                         gr.Markdown("### Creative Direction", elem_classes="section-heading")
-                        gr.Markdown(
-                            "Shape the tone of the restoration pass. Positive prompt defines the finish; negative prompt trims artifacts and unwanted traits.",
-                            elem_classes="section-kicker",
-                        )
                         prompt = gr.Textbox(
                             label="Prompt",
                             lines=5,
@@ -988,10 +802,6 @@ def build_ui() -> gr.Blocks:
                         with gr.Column():
                             with gr.Group(elem_classes="section-card"):
                                 gr.Markdown("### Render Controls", elem_classes="section-heading")
-                                gr.Markdown(
-                                    "Tune the visual intensity and denoising behavior.",
-                                    elem_classes="section-kicker",
-                                )
                                 upscale_factor = gr.Slider(
                                     minimum=1.0,
                                     maximum=4.0,
@@ -1031,10 +841,6 @@ def build_ui() -> gr.Blocks:
 
                             with gr.Group(elem_classes="section-card"):
                                 gr.Markdown("### Skin & Finish", elem_classes="section-heading")
-                                gr.Markdown(
-                                    "Reduce unstable skin texture while keeping the broader restoration pass intact.",
-                                    elem_classes="section-kicker",
-                                )
                                 skin_protect = gr.Checkbox(
                                     value=True,
                                     label="Skin Protect",
@@ -1099,10 +905,6 @@ def build_ui() -> gr.Blocks:
                         with gr.Column():
                             with gr.Group(elem_classes="section-card"):
                                 gr.Markdown("### Tiling & Runtime", elem_classes="section-heading")
-                                gr.Markdown(
-                                    "Balance memory usage and seam quality for larger renders.",
-                                    elem_classes="section-kicker",
-                                )
                                 tile_size = gr.Slider(
                                     minimum=256,
                                     maximum=1024,
@@ -1121,6 +923,13 @@ def build_ui() -> gr.Blocks:
                                     choices=list(TILE_SEED_MODES),
                                     value="same",
                                     label="Tile Seed Mode",
+                                )
+                                tile_batch_size = gr.Slider(
+                                    minimum=1,
+                                    maximum=8,
+                                    value=2,
+                                    step=1,
+                                    label="Tile Batch Size",
                                 )
                                 model_id = gr.Textbox(label="Model ID", value=DEFAULT_MODEL_ID)
                                 controlnet_id = gr.Textbox(label="ControlNet ID", value=DEFAULT_CONTROLNET_ID)
@@ -1144,34 +953,9 @@ def build_ui() -> gr.Blocks:
                                     label="Use xFormers if available",
                                 )
 
-                    with gr.Group(elem_classes="section-card"):
-                        gr.Markdown("### Render Guidance", elem_classes="section-heading")
-                        gr.HTML(
-                            """
-                            <div class="tip-grid">
-                              <div class="tip-card">
-                                <h4>For Cleaner Skin & Detail</h4>
-                                <p>Keep strength conservative and let the prompt describe texture rather than extreme realism.</p>
-                              </div>
-                              <div class="tip-card">
-                                <h4>For Large Frames</h4>
-                                <p>Drop tile size first when memory gets tight. 384 with overlap 48 is a good fallback.</p>
-                              </div>
-                              <div class="tip-card">
-                                <h4>For Safer Iteration</h4>
-                                <p>Use a fixed seed while tuning prompt and guidance, then remove it once the look is locked.</p>
-                              </div>
-                            </div>
-                            """
-                        )
-
                 with gr.Column(scale=9, elem_classes="pane-stack"):
                     with gr.Group(elem_classes="section-card"):
                         gr.Markdown("### Output Preview", elem_classes="section-heading")
-                        gr.Markdown(
-                            "The final composited frame appears here after tiled processing completes.",
-                            elem_classes="section-kicker",
-                        )
                         output_image = gr.Image(
                             type="pil",
                             format="png",
@@ -1194,31 +978,48 @@ def build_ui() -> gr.Blocks:
                                 interactive=False,
                                 elem_classes="compare-image",
                             )
-                        gr.HTML(
-                            "<div class='status-banner'>Premium pass output is assembled from overlapping tiles to keep memory predictable while preserving a more seamless finish.</div>"
-                        )
 
                     with gr.Group(elem_classes="section-card"):
                         gr.Markdown("### Process Log", elem_classes="section-heading")
-                        gr.Markdown(
-                            "Runtime diagnostics, tile fallback notes, and backend messages appear below.",
-                            elem_classes="section-kicker",
-                        )
                         logs = gr.Textbox(
                             label="Runtime Logs",
                             lines=22,
                             interactive=False,
                             elem_classes="lux-log",
                         )
-
-            gr.HTML(
-                "<div class='footer-note'>Lustre Restore Studio keeps the original CLI backend intact while presenting it as a cleaner, more product-like image restoration workspace.</div>"
-            )
-
+        preset_name.change(
+            fn=preset_to_ui_values,
+            inputs=[preset_name],
+            outputs=[
+                prompt,
+                negative_prompt,
+                upscale_factor,
+                strength,
+                conditioning_scale,
+                guidance_scale,
+                steps,
+                tile_size,
+                tile_overlap,
+                tile_seed_mode,
+                tile_batch_size,
+                skin_protect,
+                skin_protect_mode,
+                skin_strength,
+                skin_guidance_scale,
+                skin_conditioning_scale,
+                skin_tile_size,
+                skin_texture_guard,
+                skin_texture_guard_strength,
+                model_id,
+                controlnet_id,
+                offload_mode,
+            ],
+        )
         run_button.click(
             fn=run_enhance,
             inputs=[
                 input_image,
+                preset_name,
                 prompt,
                 negative_prompt,
                 upscale_factor,
@@ -1230,6 +1031,7 @@ def build_ui() -> gr.Blocks:
                 tile_size,
                 tile_overlap,
                 tile_seed_mode,
+                tile_batch_size,
                 skin_protect,
                 skin_protect_mode,
                 skin_strength,

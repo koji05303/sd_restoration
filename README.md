@@ -142,18 +142,18 @@ flowchart TD
     Pad --> TilePlan["用 tile_size / tile_overlap 計算 tile 起點"]
     Pad --> SkinMask["可選：全圖 skin mask"]
 
-    TilePlan --> Loop["逐 tile 處理"]
-    SkinMask --> Loop
-    Loop --> Crop["裁切 tile 並 edge-pad 到 tile size"]
+    TilePlan --> Jobs["建立 tile jobs"]
+    SkinMask --> Jobs
+    Jobs --> Crop["裁切 tile 並 edge-pad 到 tile size"]
     Crop --> Seed["推導 tile seed：same / offset / random / none"]
-    Seed --> Generate["SD img2img + ControlNet Tile"]
-    Generate --> Safety["Safety checker 與 near-black guard"]
+    Seed --> Params["依 skin coverage 動態混合 strength / CFG / ControlNet scale"]
+    Params --> Groups["依 pass 與量化後參數分組"]
+    Groups --> Batch["用 tile_batch_size 批次送入 SD img2img + ControlNet Tile"]
+    Batch --> Safety["Safety checker 與 near-black guard"]
     Safety --> SkinTone["可選：skin tone correction"]
     SkinTone --> TextureGuard["可選：skin texture guard"]
-    TextureGuard --> Blend["用 cosine overlap mask 疊回 accumulator"]
-    Blend --> MoreTiles{"還有 tile？"}
-    MoreTiles -->|yes| Loop
-    MoreTiles -->|no| Composite["依 weights normalize 合成全圖"]
+    TextureGuard --> Blend["依原 tile 順序用 cosine overlap mask 疊回 accumulator"]
+    Blend --> Composite["依 weights normalize 合成全圖"]
     Composite --> CropFinal["裁回真正 scaled size"]
     CropFinal --> Post["可選：color match / contrast / sharpen"]
     Post --> Save["保存圖片"]
@@ -166,6 +166,7 @@ flowchart TD
 - skin detection 只在 resized full image 上計算一次，再依 tile crop/pad，避免每個 tile 各自判斷造成 mask 不連續。
 - `skin-protect-mode tone` 只校正低頻膚色，不額外跑第二次 SD pass。
 - skin-heavy tile 會動態降低 `strength`、`guidance_scale` 與 `conditioning_scale`，避免模型在低解析度皮膚區過度重繪。
+- tile generation 會依 pass 與近似參數分組，將相同尺寸 tile 以 `tile_batch_size` 批次送入 UNet/ControlNet；只有 CUDA OOM fallback 才會呼叫 `torch.cuda.empty_cache()` 並自動拆小批次重試。
 - `skin-texture-guard` 會做 hierarchical blending：非皮膚區保留 SD detail path，皮膚區回到 Lanczos upscaled natural path，只混入少量低頻 tone delta。
 - 若偵測到皮膚且設定了 `skin_tile_size`，pipeline 會使用較大的 skin-aware tile size，減少臉部與皮膚區域的拼接點。
 - CUDA FP16 pipeline 會在 VAE decode 當下臨時切到 FP32，decode 完還原 VAE dtype，降低大片相似膚色區的條紋與 near-black 風險，同時避免 img2img encode 階段 dtype mismatch。
@@ -203,11 +204,11 @@ flowchart TD
 
 | Preset | 用途 | 主要預設 |
 | --- | --- | --- |
-| `photo` | 一般照片修復 | x2、`strength=0.20`、`conditioning_scale=0.8`、`guidance_scale=4.2`、skin guard on |
+| `photo` | 一般照片修復 | x2、`strength=0.20`、`conditioning_scale=0.8`、`guidance_scale=4.2`、`tile_batch_size=2`、skin guard on |
 | `anime` | 動漫插畫修復 | x2、`strength=0.32`、`guidance_scale=8.0`、skin guard off |
 | `denoise` | 同尺寸降噪清理 | x1、`strength=0.18`、`conditioning_scale=0.75`、skin guard strength `0.75` |
 | `upscale` | 較積極的放大 | x4、`strength=0.20`、`conditioning_scale=0.8`、skin guard strength `0.75` |
-| `low-vram` | 低 VRAM workflow | x2、`strength=0.20`、`tile_size=384`、sequential CPU offload |
+| `low-vram` | 低 VRAM workflow | x2、`strength=0.20`、`tile_size=384`、`tile_batch_size=1`、sequential CPU offload |
 
 ## SD Enhancer 參數定義
 
@@ -246,6 +247,7 @@ flowchart TD
 | `--tile-size` | positive int，需為 8 的倍數 | preset value | inference tile size；越小越省 VRAM。 |
 | `--tile-overlap` | non-negative int，需小於 `tile-size` | preset value | 相鄰 tile 的 overlap，用於降低接縫。 |
 | `--tile-seed-mode` | `same`, `offset`, `random` | preset value | 如何從 `--seed` 推導每個 tile 的 seed。 |
+| `--tile-batch-size` | positive int | preset value | 每次送入 UNet/ControlNet 的 tile 數量；OOM 時會清理 CUDA cache 並自動拆小批次重試。 |
 
 ### Skin Protection
 
@@ -303,7 +305,7 @@ flowchart TD
 | `seed` | 可選的 global seed。 |
 | `device`, `dtype`, `use_xformers`, `offload_mode` | runtime placement 與 memory control。 |
 | `overwrite` | 是否允許覆蓋輸出。 |
-| `tile_size`, `tile_overlap`, `tile_seed_mode` | tile 幾何與 seed 行為。 |
+| `tile_size`, `tile_overlap`, `tile_seed_mode`, `tile_batch_size` | tile 幾何、seed 行為與批次推論大小。 |
 | `preset` | preset 名稱或呼叫來源。 |
 | `skin_protect`, `skin_protect_mode`, `skin_strength` | skin mask 與 skin-region denoising 權限控制。 |
 | `skin_guidance_scale`, `skin_conditioning_scale`, `skin_tile_size` | skin-heavy tile 的 CFG、ControlNet scale 與 tile size 區域引導。 |
@@ -372,6 +374,7 @@ metadata sidecar 會記錄：
 | `guidance_scale` | `4.2`，可降到 `3.0` 到 `4.0` |
 | `conditioning_scale` | `0.8`，皮膚偽影嚴重時降到 `0.6` 到 `0.7` |
 | `tile_size` | `512` |
+| `tile_batch_size` | `2`，低 VRAM 或 640+ tile 時可降到 `1` |
 | `tile_overlap` | `128` 到 `192` |
 | `tile_seed_mode` | `same` |
 | `skin_protect_mode` | `tone` |
